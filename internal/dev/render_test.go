@@ -21,12 +21,12 @@ func read(t *testing.T, path string) string {
 // Another domain reaches every file: Kayra's api_domain, its healthcheck,
 // the gateway's route to Kayra's groups, the example's group.
 func TestRender_domain(t *testing.T) {
-	c, err := LoadConfig(writeConfig(t, "domain: example.org\nports: {gateway: 19080}\napis: [{name: compute}]\n"))
+	c, err := LoadConfig(writeConfig(t, "domain: example.org\nports: {gateway: 19080}\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	if err := Render(c, dir, false); err != nil {
+	if _, err := Render(c, dir, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -75,17 +75,17 @@ func TestRender_keys(t *testing.T) {
 	}
 	dir := t.TempDir()
 	key := func() string { return read(t, filepath.Join(dir, "keys", "self.pem")) }
-	if err := Render(c, dir, false); err != nil {
+	if _, err := Render(c, dir, false); err != nil {
 		t.Fatal(err)
 	}
 	first := key()
-	if err := Render(c, dir, false); err != nil {
+	if _, err := Render(c, dir, false); err != nil {
 		t.Fatal(err)
 	}
 	if key() != first {
 		t.Fatal("a render without newKeys changed the keys")
 	}
-	if err := Render(c, dir, true); err != nil {
+	if _, err := Render(c, dir, true); err != nil {
 		t.Fatal(err)
 	}
 	if key() == first {
@@ -117,7 +117,7 @@ func TestRender_unchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	if err := Render(c, dir, false); err != nil {
+	if _, err := Render(c, dir, false); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "kayra.yaml")
@@ -125,17 +125,42 @@ func TestRender_unchanged(t *testing.T) {
 	if err := os.Chtimes(path, past, past); err != nil {
 		t.Fatal(err)
 	}
-	if err := Render(c, dir, false); err != nil {
+	if _, err := Render(c, dir, false); err != nil {
 		t.Fatal(err)
 	}
 	if st, _ := os.Stat(path); !st.ModTime().Equal(past) {
 		t.Error("an unchanged kayra.yaml was written again")
 	}
 	c.Domain = "example.org"
-	if err := Render(c, dir, false); err != nil {
+	if _, err := Render(c, dir, false); err != nil {
 		t.Fatal(err)
 	}
 	if st, _ := os.Stat(path); st.ModTime().Equal(past) {
 		t.Error("a changed kayra.yaml was not written")
+	}
+}
+
+// Rendered.Kayra tells whether what Kayra and gateway-init read changed: a
+// new port in env only does not.
+func TestRender_reportsKayraChanges(t *testing.T) {
+	c, err := LoadConfig(writeConfig(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	r, err := Render(c, dir, false)
+	if err != nil || !r.Kayra {
+		t.Fatalf("first render: %+v %v, want Kayra changed", r, err)
+	}
+	if r, err = Render(c, dir, false); err != nil || r.Kayra {
+		t.Fatalf("same render: %+v %v, want nothing changed", r, err)
+	}
+	c.Example.Port = 18080 // example.env and env only
+	if r, err = Render(c, dir, false); err != nil || r.Kayra {
+		t.Fatalf("example port: %+v %v, want Kayra unchanged", r, err)
+	}
+	c.Domain = "example.org"
+	if r, err = Render(c, dir, false); err != nil || !r.Kayra {
+		t.Fatalf("domain: %+v %v, want Kayra changed", r, err)
 	}
 }

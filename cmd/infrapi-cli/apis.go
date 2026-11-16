@@ -47,7 +47,6 @@ func apisCommand() *cli.Command {
 			&cli.StringFlag{Name: "api-group", Usage: "only this api group: its long name (\"telemetry.infrapi.io\"), its short name, or its first label (\"telemetry\")"},
 			&cli.StringFlag{Name: "namespaced", Usage: "only namespaced (true) or cluster-scoped (false) resources"},
 			&cli.StringFlag{Name: "output", Aliases: []string{"o"}, Value: outputTable, Usage: "output format: table, json or yaml"},
-			&cli.StringFlag{Name: "context", Usage: "saved context to use (defaults to the current context)"},
 		},
 		Action: runApis,
 	}

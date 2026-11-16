@@ -129,10 +129,26 @@ infrapi-cli context delete staging        # drop a saved login
 | `delete` | `<name>` | remove a saved context |
 | `token` | `[name]` | print a context's bearer token (defaults to current) |
 
+#### One call in another context
+
+`--context <name>` runs one command in a saved context, without changing
+the current one, like `kubectl --context`. Every command takes it, before
+or after itself, and `$INFRAPI_CONTEXT` does the same for a whole shell:
+
+```bash
+infrapi-cli auth whoami --context staging          # staging, this once
+infrapi-cli --context staging get catalog apiregistrations
+INFRAPI_CONTEXT=staging infrapi-cli apis           # or export it for a session
+infrapi-cli context current                        # still the one you had
+```
+
+An unknown name is refused, and nothing is called.
+
 ### auth (can-i, whoami)
 
 Two checks that ask a server about the current login itself, rather
-than managing it.
+than managing it. Like every command, they take
+[`--context`](#one-call-in-another-context).
 
 #### can-i
 
@@ -182,7 +198,6 @@ command nor the server exposes that comparison any other way.
 |------|---------|---------|
 | `--api` | — | required; the API group being asked about, by its full name (`compute.infrapi.io`) or short name (`compute`, resolved through `GET /apis`) — never Kayra's own `authorization.<domain>` |
 | `--namespace` | — | required; the namespace to check against |
-| `--context` | current context | saved context to use instead |
 
 #### whoami
 
@@ -205,7 +220,6 @@ infrapi-cli auth whoami
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--context` | current context | saved context to use instead |
 
 ### apis
 
@@ -235,7 +249,6 @@ listed with `-`.
 | `--api-group` | only this api group: its long name, short name, or first label (`telemetry`, `catalog`) |
 | `--namespaced` | only namespaced (`true`) or cluster-scoped (`false`) resources |
 | `-o`, `--output` | `table` (default), `json` or `yaml` |
-| `--context` | saved context to use (defaults to the current one) |
 
 ## Calling the API (get, create, update, patch, delete)
 
@@ -352,4 +365,3 @@ the body (typically the same RFC 9457 problem-detail shape
 | `--namespace`, `-n` | — | the namespace to address — omit for a cluster-scoped resource |
 | `--data`, `-d` | — | request body, as a raw JSON string (`create`/`update`/`patch` only) |
 | `--filename`, `-f` | — | request body, read from a file — `-` for stdin (`create`/`update`/`patch` only) |
-| `--context` | current context | saved context to use instead |

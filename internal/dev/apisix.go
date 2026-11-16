@@ -22,10 +22,16 @@ type Gateway struct {
 // endpoints under /apis/<api>/<version>/-/, the spec Kayra reads included.
 // The route's id is the API's name, so adding it again replaces it.
 func (g *Gateway) AddAPI(ctx context.Context, api, upstream string) error {
-	return g.call(ctx, http.MethodPut, api, map[string]any{
+	return g.PutRoute(ctx, api, map[string]any{
 		"uri":      "/apis/" + api + "/*",
 		"upstream": map[string]any{"type": "roundrobin", "nodes": map[string]int{upstream: 1}},
 	})
+}
+
+// PutRoute puts the route id, body as the Admin API takes it: created, or
+// replaced as it is.
+func (g *Gateway) PutRoute(ctx context.Context, id string, body map[string]any) error {
+	return g.call(ctx, http.MethodPut, id, body)
 }
 
 // RemoveAPI removes the route AddAPI added.

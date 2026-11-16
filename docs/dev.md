@@ -1,41 +1,79 @@
 ---
 title: dev
-description: infrapi-cli dev - scaffold a local InfraPI dev stack from the infrapi/dev template, render it from dev.yaml, kickstart Kayra, route an API.
+description: infrapi-cli dev - scaffold a local InfraPI dev stack from the infrapi/dev template, then run it - up, down, contexts, routes, logs - on podman or docker.
 weight: 40
 ---
 
 # dev
 
 `infrapi-cli dev` is the local InfraPI to develop an API against: Kayra,
-its reconciler, etcd and APISIX on podman, configured by one file,
-`dev.yaml`. `dev init` creates the stack; its Makefile runs the other
-commands. See [the dev stack](https://infrapi.github.io/dev/dev-stack/) for
-what runs and how.
-
-| Command | What it does | Run by |
-|---|---|---|
-| `dev init [name]` | scaffold a new stack in `./<name>` | you |
-| `dev render` | render `.infrapi-dev/` from `dev.yaml` | `make render`, `make up` |
-| `dev apply` | create `dev.yaml`'s APIs and tenants in Kayra, sync every API | `make kickstart` |
-| `dev api add [api [upstream]]` | route `/apis/<api>/*` through the gateway | `make api-add` |
-| `dev api rm [api]` | remove that route | `make api-rm` |
-
-## dev init
+its reconciler, etcd and APISIX on podman or docker, configured by one
+file, `dev.yaml`. `dev init` creates a stack; every other command runs it.
+See [Getting started](https://infrapi.github.io/dev/getting-started/) for a
+walkthrough, and [the dev stack](https://infrapi.github.io/dev/dev-stack/)
+for what runs and how.
 
 > [!TIP]
 > The commands below use `infrapi-cli`: [install it](getting-started.md#1-install).
 
+| Command | What it does | How |
+|---|---|---|
+| `dev init [name]` | scaffolds a new stack in `./<name>` | Go, [scaffold](https://github.com/hay-kot/scaffold) |
+| `dev doctor` | checks the prerequisites: podman or docker, its compose, go | `<engine> --version`, `<engine> compose version`, `go version` |
+| `dev render [--new-keys]` | renders `.infrapi-dev/` from `dev.yaml` | Go |
+| `dev build` | builds `kayra-dev:local` from `kayra.src` | `podman build --format docker`, or `docker build` |
+| `dev up [--new-keys]` | renders, builds if `kayra.src` is set, starts the stack | `<engine> compose up -d` |
+| `dev down` | stops the stack, keeps etcd's data | `compose down` |
+| `dev clean` | stops it and wipes etcd | `compose down -v` |
+| `dev reset-kayra` | wipes Kayra's objects only, keeps the routes and keys | `compose exec etcd etcdctl del --prefix /kayra`, `compose restart kayra reconciler` |
+| `dev restart [service...]` | restarts services, or every one | `compose restart` |
+| `dev ps` | lists the containers | `compose ps` |
+| `dev logs [service...]` | follows the logs, of every service or those named | `compose logs -f` |
+| `dev health` | checks Kayra and the gateway answer | Go, two GETs |
+| `dev routes` | puts the stack's own gateway routes back | Go, APISIX's Admin API |
+| `dev token [--subject jdoe]` | prints a token for a user of `dev.yaml` | `compose exec kayra kayra token mint` |
+| `dev contexts` | saves `dev-admin` and `dev-<user>` contexts on the gateway | `kayra token mint` as above, then Go |
+| `dev api add [api [upstream]]` | routes `/apis/<api>/*` through the gateway | Go, APISIX's Admin API |
+| `dev api rm [api]` | removes that route | Go, APISIX's Admin API |
+| `dev example [--lib-src DIR]` | runs the example API on the host | `go run .` |
+| `dev check` | lints the stack's script, vets and builds the example | `sh -n`, `go vet`, `go build` |
+
+Every command but `init` works on the stack whose `dev.yaml` is in the
+working directory or a parent, so it runs from anywhere in the stack.
+Every external command is printed first, prefixed by `+`.
+
+## Options of every command
+
+`dev` takes them, before or after the command (`infrapi-cli dev up --engine docker`),
+or from the environment:
+
+| Flag | Variable | Default | |
+|---|---|---|---|
+| `--config` | `DEV_CONFIG` | `dev.yaml` here or in a parent | the stack's `dev.yaml` |
+| `--engine` | `ENGINE` | podman when installed, docker otherwise | the container engine |
+| `--compose` | `COMPOSE` | `<engine> compose` | the compose command; the stack's `--env-file` and `-f` files are added to it |
+| `--build-command` | `BUILD` | `podman build --format docker`, or `docker build` | the image build command |
+| `--host-alias` | `HOST_ALIAS` | `host.containers.internal`, or `host.docker.internal` | the host's name in the containers, where `dev api add` routes |
+
+With docker, compose also gets the stack's `compose.docker.yaml`, which
+gives the gateway `host.docker.internal` on Linux.
+
+## dev init
+
 ```bash
-infrapi-cli dev init mystack
-# Project Name  mystack
+infrapi-cli dev init compute
+# Project Name  compute
 # Domain        infrapi.io
 # Platform      sandbox
 # Region        eu-west-1
 # Kayra image   ghcr.io/infrapi/kayra:latest
 #
-#   mystack is ready:
+#   compute is ready:
 #
-#     cd mystack && make up && make contexts
+#     cd compute
+#     infrapi-cli dev doctor
+#     infrapi-cli dev up
+#     infrapi-cli dev contexts
 ```
 
 It renders [infrapi/dev](https://github.com/infrapi/dev), a
@@ -56,62 +94,80 @@ it is. The template is cloned once into `~/.cache/infrapi/templates`
 Without a terminal to prompt in, a CI job say:
 
 ```bash
-infrapi-cli dev init --no-prompt --set domain=example.org --set platform=preprod mystack
+infrapi-cli dev init --no-prompt --set domain=example.org --set platform=preprod compute
 ```
 
-Everything else, the ports, the users, the APIs and tenants to start
-from, is in `dev.yaml`: edit it, then `make up`.
+Everything else, the ports, the users, the example API, is in
+`dev.yaml`: edit it, then `infrapi-cli dev up`.
+
+## dev up
+
+```bash
+infrapi-cli dev up [--new-keys]
+# + podman compose --env-file .infrapi-dev/env -f compose.yaml ps -q
+# + podman compose --env-file .infrapi-dev/env -f compose.yaml up -d
+```
+
+It renders `.infrapi-dev/` (see [dev render](#dev-render)), builds
+`kayra-dev:local` when `kayra.src` is set, and starts the stack. When the
+stack was running and the render changed what Kayra, its reconciler or
+`gateway-init` read (`kayra.yaml`, `users.yaml`, the routes), it recreates
+those three: compose alone would not, since only a file they mount changed.
 
 ## dev render
 
 ```bash
-infrapi-cli dev render [--config dev.yaml] [--out .infrapi-dev] [--new-keys]
+infrapi-cli dev render [--new-keys]
 ```
 
-It writes what the stack runs with into `.infrapi-dev/`:
+It writes what the stack runs with into `.infrapi-dev/`, in the stack's
+directory. Every other command renders first, so you rarely need it alone.
 
 | File | |
 |---|---|
-| `env` | the domain, image and ports, for `podman compose --env-file` and the Makefile |
+| `env` | the domain, image and ports, for `compose --env-file` |
 | `kayra.yaml`, `users.yaml` | Kayra's configuration and users, mounted into both Kayra services |
 | `keys/*.pem` | the signing keys, generated once and kept; `--new-keys` generates new ones, refusing every token minted before |
 | `routes/*.json` | the gateway's own routes |
 | `example.env` | the example API's settings |
 
-A file is written only when its content changes, so `make up` recreates
-Kayra only when its configuration did. `dev.yaml` is checked first: an
-unknown key, a malformed name, a platform infrapi/lib does not take, or a
-port used twice is refused. `--config` defaults to `$DEV_CONFIG`, then
-`dev.yaml`.
+A file is written only when its content changes. `dev.yaml` is checked
+first: an unknown key, a malformed name, a platform infrapi/lib does not
+take, or a port used twice is refused.
 
-## dev apply
+## dev contexts
 
 ```bash
-infrapi-cli dev apply [--config dev.yaml] [--server URL] [--token TOKEN]
+infrapi-cli dev contexts
+# contexts: dev-jdoe, dev-nobody, dev-admin saved, on http://localhost:9080; dev-admin is the current one
 ```
 
-It creates `dev.yaml`'s `apis` (`<name>.<domain>`, their owner, version
-and short name) and `tenants` (the namespace, its admins' cluster RBAC on
-`catalog.<domain>` and `authorization.<domain>`, a read-write role in the
-namespace, the subscriptions), then syncs every API. It talks to the
-gateway of `dev.yaml` unless `--server` says otherwise, with `--token`,
-`$INFRAPI_TOKEN`, or the `dev-admin` context's token (`make contexts`).
-
-It reads Kayra's groups from its `/.well-known/kayra.json`, and stops if
-Kayra's domain is not `dev.yaml`'s. You can run it again: Kayra's creates
-are upserts, and a subscription that exists already is left as it is,
-not reset to `init`.
+The stack has no identity provider: Kayra signs the tokens itself. It mints
+one per user of `dev.yaml` with its `local` provider, the groups coming from
+`dev.yaml`, and saves each as `dev-<id>`. It also mints `dev-admin` with its
+`self` provider and the first of `sysadmin_groups`, and makes it the current
+context. The tokens last 8 hours: run it again when they expire.
+`dev token --subject <id>` prints one token instead of saving it.
 
 ## dev api
 
 ```bash
-infrapi-cli dev api add [--config dev.yaml] [api [upstream]]
-infrapi-cli dev api rm  [--config dev.yaml] [api]
+infrapi-cli dev api add [api [upstream]]
+infrapi-cli dev api rm  [api]
 ```
 
 `add` routes `/apis/<api>/*` to `upstream` through APISIX's Admin API:
 the API, and its own endpoints under `/apis/<api>/<version>/-/`, the spec
 Kayra reads included. `api` defaults to `dev.yaml`'s example API (a name
 without a dot is `<name>.<domain>`), `upstream` to
-`host.containers.internal:<example.port>`, the host as podman's containers
-see it. `--admin` is the Admin API, `dev.yaml`'s by default.
+`<host-alias>:<example.port>`, the host as the containers see it.
+
+## dev example
+
+```bash
+infrapi-cli dev example [--dir examples/compute] [--lib-src ../lib]
+```
+
+It runs the example API on the host, with `go run .`, its settings rendered
+from `dev.yaml` (`.infrapi-dev/example.env`). `--lib-src` runs it against a
+lib checkout through a `go.work` in `.infrapi-dev/`, to try a change to lib.

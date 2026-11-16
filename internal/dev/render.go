@@ -27,16 +27,29 @@ const keyIndent = "          "
 
 // Render writes the stack's files, from c, into dir:
 //
-//	env           the ports, image and domain, for compose (--env-file) and make (include)
+//	env           the ports, image and domain, for compose (--env-file)
 //	kayra.yaml    Kayra's configuration, the signing keys in it
 //	users.yaml    the users of Kayra's local provider
 //	routes/*.json the gateway's own routes, loaded by apisix/routes.sh
 //	example.env   the example API's settings
 //	keys/*.pem    the signing keys, generated when missing or when newKeys
 //
-// A file is written only when its content changes, so that its modification
-// time tells make up whether Kayra and the routes need reloading.
-func Render(c *Config, dir string, newKeys bool) error {
+// A file is written only when its content changes: Rendered says whether
+// what Kayra and gateway-init read changed, for dev up to recreate them.
+func Render(c *Config, dir string, newKeys bool) (Rendered, error) {
+	var r Rendered
+	err := render(c, dir, newKeys, &r)
+	return r, err
+}
+
+// Rendered is what a render changed.
+type Rendered struct {
+	// Kayra is kayra.yaml, users.yaml or a route: what Kayra, its
+	// reconciler and gateway-init read when they start.
+	Kayra bool
+}
+
+func render(c *Config, dir string, newKeys bool, r *Rendered) error {
 	if err := os.MkdirAll(filepath.Join(dir, "keys"), 0o700); err != nil {
 		return err
 	}
@@ -80,6 +93,10 @@ func Render(c *Config, dir string, newKeys bool) error {
 	if err := os.MkdirAll(routesDir, 0o755); err != nil { //#nosec G301 -- see above
 		return err
 	}
+	// MkdirAll and WriteFile apply the umask: 077 would leave 0700 and 0600
+	if err := os.Chmod(routesDir, 0o755); err != nil { //#nosec G302 -- see above
+		return err
+	}
 	keep := map[string]bool{}
 	for i, r := range routes {
 		body, err := json.MarshalIndent(r.Body, "", "  ")
@@ -100,24 +117,33 @@ func Render(c *Config, dir string, newKeys bool) error {
 			if err := os.Remove(filepath.Join(routesDir, e.Name())); err != nil {
 				return err
 			}
+			r.Kayra = true
 		}
 	}
 	for name, content := range files {
-		if err := writeIfChanged(filepath.Join(dir, name), content); err != nil {
+		changed, err := writeIfChanged(filepath.Join(dir, name), content)
+		if err != nil {
 			return err
+		}
+		if changed && name != "env" && name != "example.env" {
+			r.Kayra = true
 		}
 	}
 	return nil
 }
 
-// writeIfChanged writes content to path, 0644, unless path holds it already.
-func writeIfChanged(path string, content []byte) error {
+// writeIfChanged writes content to path, unless path holds it already, and
+// says whether it wrote it. The file is 0644 either way, whatever the umask:
+// it is mounted into the containers and read there as another user than its
+// owner, the render's dir (0700) keeping it from the host's other users.
+func writeIfChanged(path string, content []byte) (bool, error) {
+	changed := true
 	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, content) { //#nosec G304 -- a file of the render's own dir
-		return nil
+		changed = false
+	} else if err := os.WriteFile(path, content, 0o644); err != nil { //#nosec G306 -- see above
+		return false, err
 	}
-	// mounted into the containers, read there as another user than its
-	// owner: 0644, the render's dir (0700) keeping it from the host's users
-	return os.WriteFile(path, content, 0o644) //#nosec G306 -- see above
+	return changed, os.Chmod(path, 0o644) //#nosec G302 -- see above
 }
 
 // signingKey is the PEM of the RSA key at path, generated (and written,

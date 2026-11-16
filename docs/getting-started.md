@@ -17,7 +17,7 @@ archive matching your machine and tracks it for `bin update`:
 bin install github.com/infrapi/cli ~/.local/bin/infrapi-cli
 ```
 
-Or with Go 1.27 or later:
+Or with Go 1.27.3 or later:
 
 ```bash
 go install github.com/infrapi/cli/cmd/infrapi-cli@latest

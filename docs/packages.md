@@ -10,7 +10,7 @@ weight: 50
 |---|---|
 | [`internal/clicontext`](#clicontext) | `~/.config/infrapi/config`: the saved logins, kubeconfig-style contexts |
 | [`internal/oauth2login`](#oauth2login) | the CLI's half of the browser-based OAuth2 login, against Kayra's broker |
-| [`internal/dev`](#dev) | `dev.yaml`, the files rendered from it, the kickstart, the gateway routes, `dev init` |
+| [`internal/dev`](#dev) | `dev.yaml`, the files rendered from it, the stack's containers, the gateway routes, `dev init` |
 
 ## clicontext
 
@@ -188,7 +188,7 @@ import "github.com/infrapi/cli/internal/dev"
 | | |
 |---|---|
 | `LoadConfig` | reads `dev.yaml`, refusing an unknown key, sets the defaults and checks it |
-| `Render` | writes `.infrapi-dev/`: `env`, `kayra.yaml` (from the embedded `templates/kayra.yaml.tmpl`), `users.yaml`, `routes/*.json` (the openapi stub from `templates/openapi-stub.lua`), `example.env`, and the signing keys once. A file is written only when its content changes |
-| `Apply` | the kickstart through Kayra's API, its groups read from `/.well-known/kayra.json` |
+| `Stack` | a stack: its `dev.yaml`, found in the working directory or a parent, its directory, and how its containers run. `Up`, `Build`, `Compose` (down, clean, ps, logs...), `ResetKayra`, `Mint` and `Contexts`, `Health`, `Routes`, `Example`, `Check`, `Doctor`. The containers go through `<engine> compose` with `os/exec`, the only way that behaves the same with podman and docker; what talks to Kayra or APISIX is Go |
+| `Render` | writes `.infrapi-dev/`, and says whether what Kayra and gateway-init read changed (`Rendered.Kayra`), for `Up` to recreate them: `env`, `kayra.yaml` (from the embedded `templates/kayra.yaml.tmpl`), `users.yaml`, `routes/*.json` (the openapi stub from `templates/openapi-stub.lua`), `example.env`, and the signing keys once. A file is written only when its content changes |
 | `Gateway` | an API's route through APISIX's Admin API |
 | `Init` | renders a scaffold ([hay-kot/scaffold](https://github.com/hay-kot/scaffold)), `DefaultTemplate` being `https://github.com/infrapi/dev` |

@@ -77,7 +77,6 @@ func verbCommand(verb, method string, spec verbSpec) *cli.Command {
 	usage := fmt.Sprintf("%s a resource under any app's own API (kubectl-style)", verb)
 	flags := []cli.Flag{
 		&cli.StringFlag{Name: "namespace", Aliases: []string{"n"}, Usage: "the namespace to address — omit for a cluster-scoped resource (e.g. catalog's apiregistrations, authorization's clustergroups/clusterroles/clusterrolebindings)"},
-		&cli.StringFlag{Name: "context", Usage: "saved context to use (defaults to the current context)"},
 		&cli.StringFlag{Name: "output", Aliases: []string{"o"}, Value: outputTable, Usage: "output format: table (namespace, name, created/updated at), or json / yaml (the full response)"},
 	}
 	if spec.requireBody {

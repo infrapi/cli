@@ -3,7 +3,6 @@ package dev
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -22,19 +21,19 @@ func TestLoadConfig_template(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Domain != "infrapi.io" || len(c.APIs) != 5 || len(c.Tenants) != 2 || c.FullAPI(c.Example.API) != "compute.infrapi.io" {
+	if c.Domain != "infrapi.io" || len(c.Users) != 3 || c.FullAPI(c.Example.API) != "compute.infrapi.io" {
 		t.Fatalf("dev.yaml: %+v", c)
 	}
 }
 
 // An empty file is the defaults; a name without a dot is <name>.<domain>.
 func TestLoadConfig_defaults(t *testing.T) {
-	c, err := LoadConfig(writeConfig(t, "domain: example.org\napis: [{name: compute}, {name: pki.other.net, version: v2beta1}]\n"))
+	c, err := LoadConfig(writeConfig(t, "domain: example.org\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.Platform != "sandbox" || c.Ports.Gateway != 9080 || c.Kayra.Image != "ghcr.io/infrapi/kayra:latest" ||
-		c.SysadminGroups[0] != "sandbox-core-sysadmin" || c.APIs[0].Version != "v1" {
+		c.SysadminGroups[0] != "sandbox-core-sysadmin" || c.FullAPI(c.Example.API) != "compute.example.org" {
 		t.Fatalf("defaults: %+v", c)
 	}
 	if got := c.FullAPI("compute"); got != "compute.example.org" {
@@ -50,39 +49,16 @@ func TestLoadConfig_defaults(t *testing.T) {
 
 func TestLoadConfig_refuses(t *testing.T) {
 	for name, content := range map[string]string{
-		"unknown key":          "domian: infrapi.io\n",
-		"one label domain":     "domain: localhost\n",
-		"unknown platform":     "platform: lab\n",
-		"upper case domain":    "domain: Infrapi.io\n",
-		"same port twice":      "ports: {gateway: 8081}\n",
-		"bad version":          "apis: [{name: compute, version: \"1\"}]\n",
-		"api twice":            "apis: [{name: compute}, {name: compute.infrapi.io}]\n",
-		"tenant without admin": "apis: [{name: compute}]\ntenants: [{name: core, subscriptions: all}]\n",
-		"unknown subscription": "apis: [{name: compute}]\ntenants: [{name: core, admins: [g], subscriptions: [pki]}]\n",
-		"bad subscriptions":    "apis: [{name: compute}]\ntenants: [{name: core, admins: [g], subscriptions: some}]\n",
-		"unknown example":      "apis: [{name: compute}]\nexample: {api: pki}\n",
-		"user twice":           "users: [{id: a}, {id: a}]\n",
+		"unknown key":       "domian: infrapi.io\n",
+		"one label domain":  "domain: localhost\n",
+		"unknown platform":  "platform: lab\n",
+		"upper case domain": "domain: Infrapi.io\n",
+		"same port twice":   "ports: {gateway: 8081}\n",
+		"bad example api":   "example: {api: Compute}\n",
+		"user twice":        "users: [{id: a}, {id: a}]\n",
 	} {
 		if _, err := LoadConfig(writeConfig(t, content)); err == nil {
 			t.Errorf("%s: loaded, want an error", name)
 		}
-	}
-}
-
-func TestSubscribed(t *testing.T) {
-	c, err := LoadConfig(writeConfig(t, strings.Join([]string{
-		"apis: [{name: compute}, {name: dev}]",
-		"tenants:",
-		"  - {name: core, admins: [g], subscriptions: all}",
-		"  - {name: sre, admins: [g], subscriptions: [dev]}",
-	}, "\n")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Join(c.Subscribed(c.Tenants[0]), ","); got != "compute.infrapi.io,dev.infrapi.io" {
-		t.Errorf("core: %s", got)
-	}
-	if got := strings.Join(c.Subscribed(c.Tenants[1]), ","); got != "dev.infrapi.io" {
-		t.Errorf("sre: %s", got)
 	}
 }

@@ -1,7 +1,7 @@
 // Command infrapi-cli is InfraPI's command line: the portable client of a
 // Kayra server's own API (login, contexts, can-i, apis, and the get,
 // create, update, patch and delete verbs), and the local dev stack (dev
-// init, render, apply, api). Everything it does against Kayra goes
+// init, up, contexts, api...). Everything it does against Kayra goes
 // through Kayra's API, never local server code or config: `kayra`, the
 // server binary, ships with its kayra.yaml and backends; this one only
 // needs a server URL.
@@ -35,10 +35,27 @@ import (
 var version = "dev"
 
 func main() {
-	root := &cli.Command{
+	if err := newRoot().Run(context.Background(), os.Args); err != nil {
+		fmt.Fprintln(os.Stderr, "infrapi-cli:", err)
+		os.Exit(1)
+	}
+}
+
+// newRoot is infrapi-cli's command tree.
+func newRoot() *cli.Command {
+	return &cli.Command{
 		Name:    "infrapi-cli",
 		Usage:   "InfraPI's command line: log in to Kayra and call its API, and run a local dev stack",
 		Version: version,
+		// inherited by every command, before or after it: a context for this
+		// one call, the saved current one left as it is
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:    "context",
+				Sources: cli.EnvVars("INFRAPI_CONTEXT"),
+				Usage:   "saved context to use for this command, without changing the current one",
+			},
+		},
 		Commands: append([]*cli.Command{
 			loginCommand(),
 			contextCommand(),
@@ -51,11 +68,6 @@ func main() {
 			_ = cli.ShowAppHelp(cmd)
 			os.Exit(2)
 		},
-	}
-
-	if err := root.Run(context.Background(), os.Args); err != nil {
-		fmt.Fprintln(os.Stderr, "infrapi-cli:", err)
-		os.Exit(1)
 	}
 }
 
@@ -359,8 +371,8 @@ func authCommand() *cli.Command {
 	}
 }
 
-// resolveContext picks --context by name, or the current context when
-// --context is unset — the one piece every auth subcommand needs
+// resolveContext picks --context (or $INFRAPI_CONTEXT) by name, for this
+// command only, or the current context when it is unset — the one piece every auth subcommand needs
 // before it can call anything.
 func resolveContext(cmd *cli.Command) (clicontext.Context, error) {
 	f, err := clicontext.Load()
@@ -402,7 +414,6 @@ func canICommand() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "api", Required: true, Usage: "the API group being asked about: its full name (compute.infrapi.io) or its short name (compute)"},
 			&cli.StringFlag{Name: "namespace", Required: true, Usage: "the namespace to check against"},
-			&cli.StringFlag{Name: "context", Usage: "saved context to use (defaults to the current context)"},
 		},
 		Action: runCanI,
 	}
@@ -458,11 +469,9 @@ func runCanI(ctx context.Context, cmd *cli.Command) error {
 // against, never asserted locally.
 func whoamiCommand() *cli.Command {
 	return &cli.Command{
-		Name:  "whoami",
-		Usage: "print the current login's identity and attributes, per the server's own userinfo",
-		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "context", Usage: "saved context to use (defaults to the current context)"},
-		},
+		Name:   "whoami",
+		Usage:  "print the current login's identity and attributes, per the server's own userinfo",
+		Flags:  []cli.Flag{},
 		Action: runWhoami,
 	}
 }

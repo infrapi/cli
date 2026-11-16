@@ -1,6 +1,6 @@
 // Package dev is infrapi-cli's dev stack: dev.yaml, the files rendered from
-// it, the kickstart of Kayra, an API's route through the gateway, and the
-// scaffolding of a new stack (Init).
+// it, the stack's containers (Stack), an API's route through the gateway,
+// and the scaffolding of a new stack (Init).
 package dev
 
 import (
@@ -34,8 +34,6 @@ type Config struct {
 
 	SysadminGroups []string `yaml:"sysadmin_groups"`
 	Users          []User   `yaml:"users"`
-	APIs           []API    `yaml:"apis"`
-	Tenants        []Tenant `yaml:"tenants"`
 
 	Example struct {
 		API  string `yaml:"api"`
@@ -62,44 +60,9 @@ type User struct {
 	Groups     []string          `yaml:"groups"`
 }
 
-// API is one API registration of the kickstart.
-type API struct {
-	Name    string `yaml:"name"`
-	Owner   string `yaml:"owner"`
-	Version string `yaml:"version"`
-}
-
-// Tenant is one tenant of the kickstart: a namespace, its admins' RBAC and
-// its subscriptions.
-type Tenant struct {
-	Name   string   `yaml:"name"`
-	Admins []string `yaml:"admins"`
-	// Subscriptions is "all", or a list of APIs.
-	Subscriptions Subscriptions `yaml:"subscriptions"`
-}
-
-// Subscriptions is a tenant's: every API (All), or those named.
-type Subscriptions struct {
-	All   bool
-	Names []string
-}
-
-// UnmarshalYAML reads "all", or a list of API names.
-func (s *Subscriptions) UnmarshalYAML(n *yaml.Node) error {
-	if n.Kind == yaml.ScalarNode {
-		if n.Value != "all" {
-			return fmt.Errorf("line %d: subscriptions: %q, want \"all\" or a list of APIs", n.Line, n.Value)
-		}
-		s.All = true
-		return nil
-	}
-	return n.Decode(&s.Names)
-}
-
 var (
 	dnsName  = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+$`)
 	dnsLabel = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
-	version  = regexp.MustCompile(`^v[1-9][0-9]*((alpha|beta)[1-9][0-9]*)?$`)
 )
 
 // LoadConfig reads dev.yaml at path, refusing an unknown key, then sets the
@@ -185,43 +148,9 @@ func (c *Config) check() error {
 		users[u.ID] = true
 	}
 
-	apis := map[string]bool{}
-	for i := range c.APIs {
-		a := &c.APIs[i]
-		def(&a.Version, "v1")
-		full := c.FullAPI(a.Name)
-		if !dnsName.MatchString(full) {
-			return fmt.Errorf("apis: %q: a lower case DNS label, or a full DNS name", a.Name)
-		}
-		if !version.MatchString(a.Version) {
-			return fmt.Errorf("apis: %s: version %q is not like v1 or v2beta1", a.Name, a.Version)
-		}
-		if apis[full] {
-			return fmt.Errorf("apis: %s twice", full)
-		}
-		apis[full] = true
-	}
-
-	tenants := map[string]bool{}
-	for i := range c.Tenants {
-		t := &c.Tenants[i]
-		if !dnsLabel.MatchString(t.Name) || tenants[t.Name] {
-			return fmt.Errorf("tenants: %q: a lower case DNS label, once", t.Name)
-		}
-		tenants[t.Name] = true
-		if len(t.Admins) == 0 {
-			return fmt.Errorf("tenants: %s: admins: a group at least", t.Name)
-		}
-		for _, n := range t.Subscriptions.Names {
-			if !apis[c.FullAPI(n)] {
-				return fmt.Errorf("tenants: %s: subscriptions: %s is none of apis", t.Name, n)
-			}
-		}
-	}
-
 	def(&c.Example.API, "compute")
-	if c.Example.API != "" && len(c.APIs) > 0 && !apis[c.FullAPI(c.Example.API)] {
-		return fmt.Errorf("example.api: %s is none of apis", c.Example.API)
+	if !dnsName.MatchString(c.FullAPI(c.Example.API)) {
+		return fmt.Errorf("example.api: %q: a lower case DNS label, or a full DNS name", c.Example.API)
 	}
 	return nil
 }
@@ -238,21 +167,6 @@ func (c *Config) FullAPI(name string) string {
 // Builtin is one of Kayra's own groups: system, catalog or authorization.
 func (c *Config) Builtin(name string) string {
 	return name + "." + c.Domain
-}
-
-// Subscribed are the full names of the APIs tenant t subscribes to.
-func (c *Config) Subscribed(t Tenant) []string {
-	var out []string
-	if t.Subscriptions.All {
-		for _, a := range c.APIs {
-			out = append(out, c.FullAPI(a.Name))
-		}
-		return out
-	}
-	for _, n := range t.Subscriptions.Names {
-		out = append(out, c.FullAPI(n))
-	}
-	return out
 }
 
 // AdminKey is APISIX's admin key in the dev stack's apisix/config.yaml.

@@ -14,14 +14,14 @@ InfraPI's command line, one binary for two things:
   `update`, `patch`, `delete`. It never reads a server's configuration:
   everything goes through the server's own API.
 - **The dev stack.** Scaffold a local InfraPI (Kayra, etcd and APISIX on
-  podman) to develop an API against, and run it: `dev init`, `dev render`,
-  `dev apply`, `dev api`.
+  podman or docker) to develop an API against, and run it: `dev init`,
+  `dev up`, `dev contexts`, `dev logs`, `dev down`...
 
 | I want to... | Go to |
 |---|---|
 | Install it, log in, make a first call | [Getting started](getting-started.md) |
 | Know every command against Kayra, and its flags | [Commands](commands.md) |
-| Create a dev stack, and what its Makefile runs | [dev](dev.md) |
+| Create a dev stack, and run it | [dev](dev.md) |
 | Read the code: contexts, the login flow, the dev stack | [Packages](packages.md) |
 
 Examples of calls to Kayra are given twice: with `infrapi-cli`, then with
