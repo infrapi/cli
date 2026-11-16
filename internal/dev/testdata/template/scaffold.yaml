@@ -1,0 +1,11 @@
+questions:
+  - name: domain
+    prompt: {message: Domain, default: infrapi.io}
+    required: true
+  - name: platform
+    prompt: {message: Platform, options: [sandbox, preprod, prod], default: sandbox}
+    required: true
+skip:
+  - kayra/*
+messages:
+  post: "{{ .Project }} on {{ .Scaffold.domain }}"

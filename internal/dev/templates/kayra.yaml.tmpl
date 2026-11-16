@@ -1,0 +1,94 @@
+# Kayra's configuration in the dev stack, rendered by `infrapi-cli dev render`
+# from dev.yaml: do not edit, edit dev.yaml and run make render. The
+# signing keys are .infrapi-dev/keys/*.pem, generated once and kept (make
+# render NEW_KEYS=1 for new ones). Nothing here reaches outside the
+# stack's network: no OIDC provider, no LDAP, no proxy.
+
+app:
+  name: "kayra"
+  fqdn: "kayra.localhost.local"
+  url: "http://localhost:[[ .Ports.Kayra ]]"
+  platform: "[[ .Platform ]]"
+  region: "[[ .Region ]]"
+  location: "[[ .Location ]]"
+  listen_type: "tcp"
+  listen_address: "0.0.0.0:8081"
+  # Kayra's own groups are system.[[ .Domain ]], catalog.[[ .Domain ]] and
+  # authorization.[[ .Domain ]]; the APIs of dev.yaml are <name>.[[ .Domain ]].
+  api_domain: "[[ .Domain ]]"
+
+database:
+  main:
+    etcd:
+      host: ["http://etcd:2379"]
+      prefix: "/kayra"
+      timeout: 30
+
+authorizations:
+  # The token's own groups claim is trusted as is.
+  self-claims:
+    claims:
+      from: token
+      groups_field: groups
+
+  # The users of dev.yaml stand in for LDAP: groups are resolved from the
+  # token's subject, as a real directory would.
+  users:
+    local:
+      path: /etc/kayra/kayra-users.yaml
+
+authentifications:
+  # Bootstrap and ad hoc tokens, any groups:
+  #   kayra token mint --provider self --group [[ index .SysadminGroups 0 ]]
+  self:
+    authorization: self-claims
+    local:
+      - enabled: true
+        algorithm: RS512
+        issuer: true
+        kid: dev-self
+        secret: |
+[[ .SelfKey ]]
+  # Tokens for the users of dev.yaml, their groups resolved from it
+  # (--group is ignored):
+  #   kayra token mint --provider local --subject jdoe
+  local:
+    authorization: users
+    local:
+      - enabled: true
+        algorithm: RS512
+        issuer: true
+        kid: dev-local
+        secret: |
+[[ .LocalKey ]]
+sysadmin:
+  groups:
+[[- range .SysadminGroups ]]
+    - [[ . ]]
+[[- end ]]
+
+reconciler:
+  max_concurrent_reconciles: 5
+  default_mode: dev
+  # The stack's APISIX: its openapi-stub route serves an OpenAPI document
+  # for any api at /apis/<api>/<version>/-/openapi.json, its hooks route
+  # answers the pipeline below.
+  gateway_url: "http://apisix:9080"
+  mode:
+    # Every registration without a mode of its own runs this pipeline:
+    # ask the app to sync, then poll until it says done.
+    dev:
+      - method: post
+        endpoint: "http://apisix:9080/hooks/{{ .Subscription.Api }}/namespaces/{{ .Subscription.Namespace }}/sync"
+        data:
+          sync_id: "{{ .Subscription.ExpectedSyncID }}"
+        headers:
+          Content-Type: "application/json"
+        timeout: "30s"
+      - method: get
+        endpoint: "http://apisix:9080/hooks/{{ .Subscription.Api }}/namespaces/{{ .Subscription.Namespace }}/sync/{{ .Subscription.ExpectedSyncID }}"
+        timeout: "60s"
+        wait:
+          - key: .status
+            successes: [done]
+            failures: [failed, canceled]

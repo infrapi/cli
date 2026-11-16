@@ -1,0 +1,42 @@
+version: 2
+
+project_name: infrapi-cli
+
+builds:
+  - id: infrapi-cli
+    main: ./cmd/infrapi-cli
+    binary: infrapi-cli
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: infrapi-cli
+    ids: [infrapi-cli]
+    name_template: >-
+      infrapi-cli_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+# go-semantic-release (see .github/workflows/ci.yml) tags and creates the
+# GitHub release with its own notes before this runs: append the built
+# artifacts to that release rather than writing a second changelog.
+release:
+  mode: append
+
+changelog:
+  disable: true
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"

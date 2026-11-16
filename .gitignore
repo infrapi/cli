@@ -1,0 +1,7 @@
+# go test coverage artifacts (make test)
+cover.out
+coverage.html
+/infrapi-cli
+
+# goreleaser output
+dist/
