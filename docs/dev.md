@@ -22,6 +22,9 @@ what runs and how.
 
 ## dev init
 
+> [!TIP]
+> The commands below use `infrapi-cli`: [install it](getting-started.md#1-install).
+
 ```bash
 infrapi-cli dev init mystack
 # Project Name  mystack

@@ -22,6 +22,9 @@ configures: every command here only ever talks to that server's own API.
 A browser-based OAuth2 flow against a Kayra server you only know the URL
 of — the one way to authenticate with this binary.
 
+> [!TIP]
+> The commands below use `infrapi-cli`: [install it](getting-started.md#1-install).
+
 ```bash
 infrapi-cli login --server https://kayra.example.com
 # oauth2login: opening browser to log in:
