@@ -30,6 +30,40 @@ NO_COLOR=1 infrapi-cli apis                               # plain
 infrapi-cli apis --no-color                               # plain
 ```
 
+## Behind a proxy
+
+infrapi-cli takes its proxy from the environment, as curl and git do:
+
+| Variable | |
+|---|---|
+| `https_proxy`, `HTTPS_PROXY` | the proxy for `https://` URLs |
+| `http_proxy`, `HTTP_PROXY` | the proxy for `http://` URLs |
+| `no_proxy`, `NO_PROXY` | hosts, domains (`.example.com`) or CIDRs reached directly, comma-separated |
+
+```bash
+export https_proxy=http://proxy.example.com:3128   # http://user:password@... when it asks for one
+export http_proxy=$https_proxy
+export no_proxy=.example.com,10.0.0.0/8
+```
+
+Every call goes through it: Kayra's API, `login`, and `dev init`'s clone
+of the [infrapi/dev](https://github.com/infrapi/dev) template.
+`localhost` and loopback addresses are always reached directly, so the
+dev stack's own calls (Kayra, the gateway, APISIX's Admin API) never go
+through it.
+
+For the dev stack:
+
+- `dev doctor` shows the proxy variables set, a password hidden;
+- `dev build` passes them to the image build, for its Go modules, by name
+  only (`--build-arg HTTPS_PROXY`): the command printed shows no password;
+- `dev example` and `dev check` run `go`, which reads them too;
+- podman pulls images with them. Docker pulls through its daemon, which
+  has a proxy setting of its own
+  ([Docker's daemon proxy](https://docs.docker.com/engine/daemon/proxy/)).
+
+The containers of the stack don't get them: they only talk to each other.
+
 ## Logging in
 
 The portable, end-user client of a Kayra server — hand someone this

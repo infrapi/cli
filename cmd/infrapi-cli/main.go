@@ -25,6 +25,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/infrapi/cli/internal/clicontext"
+	"github.com/infrapi/cli/internal/netproxy"
 	"github.com/infrapi/cli/internal/oauth2login"
 	"github.com/infrapi/cli/internal/ui"
 )
@@ -35,6 +36,9 @@ import (
 var version = "dev"
 
 func main() {
+	// https_proxy, http_proxy, no_proxy: Kayra's API, the login, APISIX's
+	// Admin API, dev init's template clone
+	netproxy.Setup()
 	if err := newRoot().Run(context.Background(), os.Args); err != nil {
 		_, _ = fmt.Fprintln(ui.Stderr(), ui.Fail("infrapi-cli:"), err)
 		os.Exit(1)

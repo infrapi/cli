@@ -2,10 +2,14 @@ package dev
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/infrapi/cli/internal/netproxy"
 )
 
 // Without prompts, --set answers, the other questions take their default,
@@ -63,5 +67,30 @@ func TestInit_refuses(t *testing.T) {
 		if _, err := Init(o, &bytes.Buffer{}); err == nil {
 			t.Errorf("%s: no error", name)
 		}
+	}
+}
+
+// dev init clones a remote template through http_proxy, https_proxy.
+func TestInit_throughProxy(t *testing.T) {
+	for _, v := range netproxy.Vars {
+		t.Setenv(v, "")
+	}
+	netproxy.Setup()
+	var got []string
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Host+r.URL.Path)
+		http.NotFound(w, r)
+	}))
+	defer proxy.Close()
+	t.Setenv("http_proxy", proxy.URL)
+
+	_, err := Init(InitOptions{
+		Template: "http://git.example.com/infrapi/dev", Name: "x", Dir: t.TempDir(), NoPrompt: true, Cache: t.TempDir(),
+	}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("cloned from a proxy answering 404")
+	}
+	if len(got) == 0 || got[0] != "git.example.com/infrapi/dev/info/refs" {
+		t.Errorf("the proxy got %v", got)
 	}
 }

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/infrapi/cli/internal/netproxy"
+
 	"github.com/infrapi/cli/internal/ui"
 
 	"github.com/infrapi/cli/internal/clicontext"
@@ -338,7 +340,14 @@ func (s *Stack) Build(ctx context.Context) error {
 	if _, err := os.Stat(filepath.Join(src, "go.mod")); err != nil {
 		return fmt.Errorf("build: no Kayra checkout at %s (kayra.src in %s)", src, ConfigName)
 	}
-	args := append(append([]string{}, s.build...), "--build-context", "src="+src, "-t", localImage, filepath.Join(filepath.Base(s.Out), "kayra"))
+	args := append([]string{}, s.build...)
+	// the build downloads Go modules: the proxy, by name only, so the
+	// command printed shows no password; the engine reads the value from
+	// its environment
+	for _, kv := range netproxy.Set() {
+		args = append(args, "--build-arg", kv[0])
+	}
+	args = append(args, "--build-context", "src="+src, "-t", localImage, filepath.Join(filepath.Base(s.Out), "kayra"))
 	return s.run(ctx, Cmd{Args: args})
 }
 
@@ -587,6 +596,17 @@ func (s *Stack) Doctor(ctx context.Context) []Check {
 		checks = append(checks, Check{Name: "go", OK: true, Optional: true, Detail: v})
 	} else {
 		checks = append(checks, Check{Name: "go", Optional: true, Detail: "only for dev example and dev check: https://go.dev/dl/"})
+	}
+	// infrapi-cli, go, podman's pulls and the image build take it; docker's
+	// pulls take the daemon's own
+	var set []string
+	for _, kv := range netproxy.Set() {
+		set = append(set, kv[0]+"="+kv[1])
+	}
+	if len(set) > 0 {
+		checks = append(checks, Check{Name: "proxy", OK: true, Optional: true, Detail: strings.Join(set, " ")})
+	} else {
+		checks = append(checks, Check{Name: "proxy", OK: true, Optional: true, Detail: "none: https_proxy, http_proxy, no_proxy unset"})
 	}
 	return checks
 }

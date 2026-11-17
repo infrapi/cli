@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/infrapi/cli/internal/clicontext"
+	"github.com/infrapi/cli/internal/netproxy"
 )
 
 // recorder stands in for os/exec: it records the commands, and answers
@@ -305,5 +306,36 @@ func TestCompose_onRenderedFiles(t *testing.T) {
 	s.Out = filepath.Join(t.TempDir(), ".infrapi-dev")
 	if err := s.Compose(context.Background(), "ps"); err == nil || !strings.Contains(err.Error(), "dev up --force") {
 		t.Errorf("not rendered: %v", err)
+	}
+}
+
+// The build gets the proxy variables by name, its value never printed;
+// doctor shows them, the password hidden.
+func TestBuild_proxy(t *testing.T) {
+	for _, v := range netproxy.Vars {
+		t.Setenv(v, "")
+	}
+	t.Setenv("HTTPS_PROXY", "http://jdoe:secret@proxy.example.com:3128")
+	t.Setenv("NO_PROXY", "localhost")
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "go.mod"), []byte("module x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, rec := testStack(t, "kayra: {src: "+src+"}\n", StackOptions{})
+	if err := s.Build(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	line := rec.lines()[0]
+	if !strings.Contains(line, "--build-arg HTTPS_PROXY --build-arg NO_PROXY --build-context") || strings.Contains(line, "secret") {
+		t.Errorf("build: %s", line)
+	}
+	var proxy string
+	for _, c := range s.Doctor(context.Background()) {
+		if c.Name == "proxy" {
+			proxy = c.Detail
+		}
+	}
+	if proxy != "HTTPS_PROXY=http://jdoe:xxxxx@proxy.example.com:3128 NO_PROXY=localhost" {
+		t.Errorf("doctor: %q", proxy)
 	}
 }

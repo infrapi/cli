@@ -10,6 +10,7 @@ weight: 50
 |---|---|
 | [`internal/clicontext`](#clicontext) | `~/.config/infrapi/config`: the saved logins, kubeconfig-style contexts |
 | [`internal/oauth2login`](#oauth2login) | the CLI's half of the browser-based OAuth2 login, against Kayra's broker |
+| `internal/netproxy` | `https_proxy`, `http_proxy`, `no_proxy` for every call, read on each request: `http.DefaultTransport`, which go-git uses too |
 | `internal/ui` | the terminal output: styles (lipgloss), code highlighting (chroma), colors on a terminal only, off with `NO_COLOR` or `--no-color` |
 | [`internal/dev`](#dev) | `dev.yaml`, the files rendered from it, the stack's containers, the gateway routes, `dev init` |
 
