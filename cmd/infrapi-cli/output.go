@@ -12,10 +12,11 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/infrapi/cli/internal/ui"
 )
 
 // Output formats accepted by --output.
@@ -46,18 +47,19 @@ func renderTable(stdout, stderr io.Writer, body []byte, namespace string) (ok bo
 		return true, err
 	}
 
-	w := tabwriter.NewWriter(stdout, 0, 2, 2, ' ', 0)
+	header := []string{"NAME", "CREATED AT", "UPDATED AT"}
 	if namespace != "" {
-		_, _ = fmt.Fprint(w, "NAMESPACE\t")
+		header = append([]string{"NAMESPACE"}, header...)
 	}
-	_, _ = fmt.Fprintln(w, "NAME\tCREATED AT\tUPDATED AT")
+	cells := make([][]string, 0, len(rows))
 	for _, row := range rows {
+		cell := []string{rowName(row), timestampCell(row["created_at"]), timestampCell(row["updated_at"])}
 		if namespace != "" {
-			_, _ = fmt.Fprintf(w, "%s\t", namespace)
+			cell = append([]string{namespace}, cell...)
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", rowName(row), timestampCell(row["created_at"]), timestampCell(row["updated_at"]))
+		cells = append(cells, cell)
 	}
-	return true, w.Flush()
+	return true, ui.Table(stdout, header, cells, nil)
 }
 
 // resourceRows decodes body as a list of resources, or a single one as
@@ -123,6 +125,7 @@ func renderProblem(stderr io.Writer, status int, body []byte) {
 		Detail   string `json:"detail"`
 		Solution string `json:"solution"`
 	}
+	out := ui.Writer(stderr)
 	title := http.StatusText(status)
 	if title == "" {
 		title = "HTTP error"
@@ -131,17 +134,17 @@ func renderProblem(stderr io.Writer, status int, body []byte) {
 		if p.Title != "" {
 			title = p.Title
 		}
-		_, _ = fmt.Fprintf(stderr, "Error: %s (%d): %s\n", title, status, p.Detail)
+		_, _ = fmt.Fprintf(out, "%s %s (%d): %s\n", ui.Fail("Error:"), ui.Bold(title), status, p.Detail)
 		if p.Solution != "" {
-			_, _ = fmt.Fprintf(stderr, "Solution: %s\n", p.Solution)
+			_, _ = fmt.Fprintf(out, "%s %s\n", ui.OK("Solution:"), p.Solution)
 		}
 		return
 	}
-	msg := fmt.Sprintf("Error: %s (%d)", title, status)
+	msg := fmt.Sprintf("%s %s (%d)", ui.Fail("Error:"), ui.Bold(title), status)
 	if b := strings.TrimSpace(string(body)); b != "" {
 		msg += ": " + b
 	}
-	_, _ = fmt.Fprintln(stderr, msg)
+	_, _ = fmt.Fprintln(out, msg)
 }
 
 // printJSON pretty-prints body as JSON when it parses as such, falling
@@ -152,7 +155,7 @@ func printJSON(w io.Writer, body []byte) {
 	}
 	var pretty bytes.Buffer
 	if err := json.Indent(&pretty, body, "", "  "); err == nil {
-		_, _ = fmt.Fprintln(w, pretty.String())
+		_ = ui.Highlight(w, "json", pretty.String()+"\n")
 		return
 	}
 	_, _ = fmt.Fprintln(w, string(body))
@@ -180,7 +183,7 @@ func printYAML(w io.Writer, body []byte) {
 		return
 	}
 	_ = enc.Close()
-	_, _ = w.Write(out.Bytes())
+	_ = ui.Highlight(w, "yaml", out.String())
 }
 
 func clearStyle(n *yaml.Node) {

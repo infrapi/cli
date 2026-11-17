@@ -25,7 +25,7 @@ func TestRender_umask077(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := s.Render(false); err != nil {
+	if _, err := s.Render(RenderOptions{Force: true}); err != nil {
 		t.Fatal(err)
 	}
 	for path, want := range map[string]os.FileMode{
@@ -52,7 +52,7 @@ func TestRender_umask077(t *testing.T) {
 	if err := os.Chmod(kayra, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Render(false); err != nil {
+	if _, err := s.Render(RenderOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if st, _ := os.Stat(kayra); st.Mode().Perm() != 0o644 {

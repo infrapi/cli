@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -13,9 +15,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"text/template"
 
+	"github.com/pmezard/go-difflib/difflib"
 	"gopkg.in/yaml.v3"
 )
 
@@ -25,31 +30,190 @@ var templates embed.FS
 // keyIndent is the indentation of a key in kayra.yaml's `secret: |` block.
 const keyIndent = "          "
 
-// Render writes the stack's files, from c, into dir:
+// Render renders the stack's files, from c, into dir:
 //
 //	env           the ports, image and domain, for compose (--env-file)
 //	kayra.yaml    Kayra's configuration, the signing keys in it
 //	users.yaml    the users of Kayra's local provider
 //	routes/*.json the gateway's own routes, loaded by apisix/routes.sh
 //	example.env   the example API's settings
-//	keys/*.pem    the signing keys, generated when missing or when newKeys
+//	keys/*.pem    the signing keys, generated when missing or when NewKeys
 //
-// A file is written only when its content changes: Rendered says whether
+// It writes nothing unless Force, or unless nothing changes: a render that
+// would create, change or remove a file is canceled, Rendered.Pending set
+// and Rendered.Diff holding what it would do, so a file edited by hand in
+// dir is never overwritten without asking. Rendered.Kayra says whether
 // what Kayra and gateway-init read changed, for dev up to recreate them.
-func Render(c *Config, dir string, newKeys bool) (Rendered, error) {
-	var r Rendered
-	err := render(c, dir, newKeys, &r)
-	return r, err
+func Render(c *Config, dir string, o RenderOptions) (Rendered, error) {
+	pl, err := plan(c, dir, o.NewKeys)
+	if err != nil {
+		return Rendered{}, err
+	}
+	r := Rendered{Kayra: pl.kayra, Diff: pl.diff.String(), Files: pl.files, Keep: keep(pl.was, pl.writes)}
+	if len(pl.files) > 0 && !o.Force {
+		r.Pending = true
+		return r, nil
+	}
+	return r, pl.apply(dir)
 }
 
-// Rendered is what a render changed.
+// RenderOptions are a render's options.
+type RenderOptions struct {
+	// NewKeys generates new signing keys.
+	NewKeys bool
+	// Force writes the changes. Without it, a render that would change a
+	// file writes nothing.
+	Force bool
+}
+
+// Rendered is what a render changed, or would change.
 type Rendered struct {
-	// Kayra is kayra.yaml, users.yaml or a route: what Kayra, its
+	// Kayra is kayra.yaml, users.yaml, a route or a key: what Kayra, its
 	// reconciler and gateway-init read when they start.
 	Kayra bool
+	// Diff is the diff of the files changed, relative to the render's dir,
+	// empty when none did: a new file is named only, a signing key shown
+	// as its fingerprint.
+	Diff string
+	// Files are the files changed, relative to the render's dir.
+	Files []string
+	// Pending is a render canceled, without Force: nothing was written.
+	Pending bool
+	// Keep is what to add to dev.yaml for the render to give the files as
+	// they are on disk, edits made by hand included: kayra.config,
+	// gateway.routes, compose.env, example.env. Keys are left out.
+	Keep map[string]any
 }
 
-func render(c *Config, dir string, newKeys bool, r *Rendered) error {
+// rendering is what a render writes: the files' new contents, nil for a
+// route to remove.
+type rendering struct {
+	writes map[string][]byte
+	// was is what a file changed held, for Rendered.Keep
+	was   map[string][]byte
+	keys  map[string][]byte
+	files []string
+	diff  strings.Builder
+	kayra bool
+}
+
+// plan is what rendering c into dir would change, without writing it.
+func plan(c *Config, dir string, newKeys bool) (*rendering, error) {
+	pl := &rendering{writes: map[string][]byte{}, keys: map[string][]byte{}, was: map[string][]byte{}}
+	keys := map[string][]byte{}
+	for _, k := range [][2]string{{"self.pem", c.Kayra.Keys.Self}, {"local.pem", c.Kayra.Keys.Local}} {
+		name, own := k[0], k[1]
+		rel := filepath.Join("keys", name)
+		path := filepath.Join(dir, rel)
+		var key []byte
+		var created bool
+		var err error
+		if own != "" {
+			key, created, err = ownKey(c, own, path)
+			if created {
+				fmt.Fprintf(&pl.diff, "%s: dev.yaml's kayra.keys.%s, %s\n", rel, strings.TrimSuffix(name, ".pem"), fingerprint(key))
+			}
+		} else {
+			key, created, err = signingKey(path, newKeys)
+			if created {
+				fmt.Fprintf(&pl.diff, "%s: new signing key %s\n", rel, fingerprint(key))
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+		if created {
+			pl.keys[rel] = key
+			pl.files = append(pl.files, rel)
+			pl.kayra = true
+		}
+		keys[name] = key
+	}
+
+	kayra, err := renderKayra(c, keys["self.pem"], keys["local.pem"])
+	if err != nil {
+		return nil, err
+	}
+	users, err := yaml.Marshal(map[string][]User{"users": c.Users})
+	if err != nil {
+		return nil, err
+	}
+	routes, removed, err := stackRoutes(c)
+	if err != nil {
+		return nil, err
+	}
+	files := map[string][]byte{
+		"env":         []byte(withEnv(envFile(c), c.Compose.Env, "compose.env")),
+		"kayra.yaml":  kayra,
+		"users.yaml":  append([]byte("# The users of dev.yaml, rendered by infrapi-cli dev render: edit dev.yaml.\n"), users...),
+		"example.env": []byte(withEnv(exampleEnv(c), c.Example.Env, "example.env")),
+	}
+	keep := map[string]bool{}
+	for i, r := range routes {
+		body, err := json.MarshalIndent(r.Body, "", "  ")
+		if err != nil {
+			return nil, err
+		}
+		name := fmt.Sprintf("%02d-%s.json", i, r.ID)
+		files[filepath.Join("routes", name)] = append(body, '\n')
+		keep[name] = true
+	}
+	// the routes dev.yaml removes: apisix/routes.sh deletes them
+	if len(removed) > 0 {
+		files[filepath.Join("routes", removedRoutes)] = []byte(strings.Join(removed, "\n") + "\n")
+		keep[removedRoutes] = true
+	}
+
+	// a route dev.yaml no longer has, or a file put there by hand
+	old, err := os.ReadDir(filepath.Join(dir, "routes"))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	for _, e := range old {
+		if keep[e.Name()] {
+			continue
+		}
+		rel := filepath.Join("routes", e.Name())
+		was, err := os.ReadFile(filepath.Join(dir, rel)) //#nosec G304 -- a file of the render's own dir
+		if err != nil {
+			return nil, err
+		}
+		pl.diff.WriteString(unifiedDiff(rel, was, nil))
+		pl.writes[rel] = nil
+		pl.was[filepath.ToSlash(rel)] = was
+		pl.files = append(pl.files, rel)
+		pl.kayra = true
+	}
+
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		was, err := os.ReadFile(filepath.Join(dir, name)) //#nosec G304 -- a file of the render's own dir
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			fmt.Fprintf(&pl.diff, "%s: new file\n", name)
+		case err != nil:
+			return nil, err
+		case bytes.Equal(was, files[name]):
+			continue
+		default:
+			pl.diff.WriteString(unifiedDiff(name, was, files[name]))
+			pl.was[filepath.ToSlash(name)] = was
+		}
+		pl.writes[name] = files[name]
+		pl.files = append(pl.files, name)
+		if name != "env" && name != "example.env" {
+			pl.kayra = true
+		}
+	}
+	return pl, nil
+}
+
+// apply writes pl into dir.
+func (pl *rendering) apply(dir string) error {
 	if err := os.MkdirAll(filepath.Join(dir, "keys"), 0o700); err != nil {
 		return err
 	}
@@ -58,38 +222,8 @@ func render(c *Config, dir string, newKeys bool, r *Rendered) error {
 	if err := os.Chmod(dir, 0o700); err != nil { //#nosec G302 -- a directory: 0700 is its owner only
 		return err
 	}
-
-	selfKey, err := signingKey(filepath.Join(dir, "keys", "self.pem"), newKeys)
-	if err != nil {
-		return err
-	}
-	localKey, err := signingKey(filepath.Join(dir, "keys", "local.pem"), newKeys)
-	if err != nil {
-		return err
-	}
-
-	kayra, err := renderKayra(c, selfKey, localKey)
-	if err != nil {
-		return err
-	}
-	users, err := yaml.Marshal(map[string][]User{"users": c.Users})
-	if err != nil {
-		return err
-	}
-	routes, err := gatewayRoutes(c)
-	if err != nil {
-		return err
-	}
-
-	files := map[string][]byte{
-		"env":         []byte(envFile(c)),
-		"kayra.yaml":  kayra,
-		"users.yaml":  append([]byte("# The users of dev.yaml, rendered by infrapi-cli dev render: edit dev.yaml.\n"), users...),
-		"example.env": []byte(exampleEnv(c)),
-	}
 	routesDir := filepath.Join(dir, "routes")
-	// read by gateway-init as another user than its owner; dir, 0700, keeps
-	// it from the host's other users
+	// read by gateway-init as another user than its owner
 	if err := os.MkdirAll(routesDir, 0o755); err != nil { //#nosec G301 -- see above
 		return err
 	}
@@ -97,80 +231,133 @@ func render(c *Config, dir string, newKeys bool, r *Rendered) error {
 	if err := os.Chmod(routesDir, 0o755); err != nil { //#nosec G302 -- see above
 		return err
 	}
-	keep := map[string]bool{}
-	for i, r := range routes {
-		body, err := json.MarshalIndent(r.Body, "", "  ")
-		if err != nil {
+	for rel, key := range pl.keys {
+		if err := os.WriteFile(filepath.Join(dir, rel), key, 0o600); err != nil {
 			return err
 		}
-		name := fmt.Sprintf("%02d-%s.json", i, r.ID)
-		files[filepath.Join("routes", name)] = append(body, '\n')
-		keep[name] = true
 	}
-	// a route dev.yaml no longer has
-	old, err := os.ReadDir(routesDir)
-	if err != nil {
-		return err
-	}
-	for _, e := range old {
-		if !keep[e.Name()] {
-			if err := os.Remove(filepath.Join(routesDir, e.Name())); err != nil {
+	for rel, content := range pl.writes {
+		path := filepath.Join(dir, rel)
+		if content == nil {
+			if err := os.Remove(path); err != nil {
 				return err
 			}
-			r.Kayra = true
+			continue
 		}
-	}
-	for name, content := range files {
-		changed, err := writeIfChanged(filepath.Join(dir, name), content)
-		if err != nil {
+		if err := writeFile(path, content); err != nil {
 			return err
 		}
-		if changed && name != "env" && name != "example.env" {
-			r.Kayra = true
+	}
+	// files left as they were, written under another umask by an older render
+	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || filepath.Dir(path) == filepath.Join(dir, "keys") {
+			return err
 		}
-	}
-	return nil
+		return os.Chmod(path, 0o644) //#nosec G302 -- see writeFile
+	})
 }
 
-// writeIfChanged writes content to path, unless path holds it already, and
-// says whether it wrote it. The file is 0644 either way, whatever the umask:
-// it is mounted into the containers and read there as another user than its
-// owner, the render's dir (0700) keeping it from the host's other users.
-func writeIfChanged(path string, content []byte) (bool, error) {
-	changed := true
-	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, content) { //#nosec G304 -- a file of the render's own dir
-		changed = false
-	} else if err := os.WriteFile(path, content, 0o644); err != nil { //#nosec G306 -- see above
-		return false, err
+// writeFile writes content to path, 0644 whatever the umask: it is mounted
+// into the containers and read there as another user than its owner, the
+// render's dir (0700) keeping it from the host's other users.
+func writeFile(path string, content []byte) error {
+	if err := os.WriteFile(path, content, 0o644); err != nil { //#nosec G306 -- see above
+		return err
 	}
-	return changed, os.Chmod(path, 0o644) //#nosec G302 -- see above
+	return os.Chmod(path, 0o644) //#nosec G302 -- see above
 }
 
-// signingKey is the PEM of the RSA key at path, generated (and written,
-// 0600) when the file is missing or when renew.
-func signingKey(path string, renew bool) ([]byte, error) {
+// unifiedDiff is the diff of the file name from was to now, nil for a file
+// missing on that side. A PEM block is shown as its fingerprint: the diff
+// never prints a signing key.
+func unifiedDiff(name string, was, now []byte) string {
+	from, to := "a/"+name, "b/"+name
+	if was == nil {
+		from = "/dev/null"
+	}
+	if now == nil {
+		to = "/dev/null"
+	}
+	lines := func(b []byte) []string {
+		if b == nil {
+			return nil
+		}
+		return difflib.SplitLines(redactPEM(string(b)))
+	}
+	out, err := difflib.GetUnifiedDiffString(difflib.UnifiedDiff{
+		A:        lines(was),
+		B:        lines(now),
+		FromFile: from,
+		ToFile:   to,
+		Context:  3,
+	})
+	if err != nil {
+		return fmt.Sprintf("%s: %v\n", name, err)
+	}
+	return out
+}
+
+// pemBlock is a PEM block, as kayra.yaml indents it.
+var pemBlock = regexp.MustCompile(`(?m)^([ \t]*)-----BEGIN ([A-Z ]+)-----\n(?:[ \t]*[A-Za-z0-9+/=]*\n)*?[ \t]*-----END [A-Z ]+-----$`)
+
+func redactPEM(s string) string {
+	return pemBlock.ReplaceAllStringFunc(s, func(block string) string {
+		m := pemBlock.FindStringSubmatch(block)
+		return fmt.Sprintf("%s-----%s %s-----", m[1], m[2], fingerprint([]byte(block)))
+	})
+}
+
+// fingerprint is a key's short SHA-256, whitespace ignored.
+func fingerprint(key []byte) string {
+	sum := sha256.Sum256([]byte(strings.Join(strings.Fields(string(key)), "")))
+	return "sha256:" + hex.EncodeToString(sum[:])[:16]
+}
+
+// removedRoutes is the file, in routes/, of the ids of the routes dev.yaml
+// removes, one a line.
+const removedRoutes = "removed"
+
+// ownKey is dev.yaml's kayra.keys file own, a PEM key, relative to
+// dev.yaml; created says it is not yet the one at path.
+func ownKey(c *Config, own, path string) (key []byte, created bool, err error) {
+	if !filepath.IsAbs(own) {
+		own = filepath.Join(c.dir, own)
+	}
+	key, err = os.ReadFile(own) //#nosec G304 -- a key file dev.yaml names
+	if err != nil {
+		return nil, false, fmt.Errorf("kayra.keys: %w", err)
+	}
+	if b, _ := pem.Decode(key); b == nil {
+		return nil, false, fmt.Errorf("kayra.keys: %s: not a PEM key", own)
+	}
+	cur, err := os.ReadFile(path) //#nosec G304 -- a key of the render's own dir
+	return key, err != nil || !bytes.Equal(cur, key), nil
+}
+
+// signingKey is the PEM of the RSA key at path, generated when the file is
+// missing or when renew: created says so, and the render writes it.
+func signingKey(path string, renew bool) (key []byte, created bool, err error) {
 	if !renew {
 		data, err := os.ReadFile(path) //#nosec G304 -- a key of the render's own dir
 		if err == nil {
 			if b, _ := pem.Decode(data); b == nil {
-				return nil, fmt.Errorf("%s: not a PEM key: remove it, or render with new keys", path)
+				return nil, false, fmt.Errorf("%s: not a PEM key: remove it, or render with new keys", path)
 			}
-			return data, nil
+			return data, false, nil
 		}
 		if !errors.Is(err, fs.ErrNotExist) {
-			return nil, err
+			return nil, false, err
 		}
 	}
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	der, err := x509.MarshalPKCS8PrivateKey(key)
+	der, err := x509.MarshalPKCS8PrivateKey(rsaKey)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	data := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
-	return data, os.WriteFile(path, data, 0o600)
+	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), true, nil
 }
 
 func renderKayra(c *Config, selfKey, localKey []byte) ([]byte, error) {
@@ -187,7 +374,25 @@ func renderKayra(c *Config, selfKey, localKey []byte) ([]byte, error) {
 		*Config
 		SelfKey, LocalKey string
 	}{c, indent(selfKey), indent(localKey)})
-	return out.Bytes(), err
+	if err != nil {
+		return nil, err
+	}
+	// dev.yaml's kayra.config, merged in as YAML nodes: the template's
+	// comments stay
+	var doc yaml.Node
+	if err := yaml.Unmarshal(out.Bytes(), &doc); err != nil {
+		return nil, fmt.Errorf("kayra.yaml: %w", err)
+	}
+	if c.Kayra.Config.Kind == yaml.MappingNode {
+		mergeNode(doc.Content[0], &c.Kayra.Config)
+	}
+	var merged bytes.Buffer
+	enc := yaml.NewEncoder(&merged)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return nil, err
+	}
+	return merged.Bytes(), enc.Close()
 }
 
 // envFile holds what compose.yaml and the Makefile take from dev.yaml:

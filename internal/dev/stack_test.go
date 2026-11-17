@@ -3,6 +3,7 @@ package dev
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -62,6 +63,10 @@ func testStack(t *testing.T, devYAML string, o StackOptions) (*Stack, *recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// as dev init leaves it
+	if _, err := s.Render(RenderOptions{Force: true}); err != nil {
+		t.Fatal(err)
+	}
 	return s, rec
 }
 
@@ -72,11 +77,11 @@ func TestUp_recreatesOnlyOnChange(t *testing.T) {
 	ctx := context.Background()
 	recreate := "--force-recreate --no-deps kayra reconciler gateway-init"
 
-	if err := s.Up(ctx, false); err != nil { // fresh: nothing running yet
+	if err := s.Up(ctx, RenderOptions{}); err != nil { // fresh: nothing running yet
 		t.Fatal(err)
 	}
 	rec.running = true
-	if err := s.Up(ctx, false); err != nil { // running, nothing changed
+	if err := s.Up(ctx, RenderOptions{}); err != nil { // running, nothing changed
 		t.Fatal(err)
 	}
 	for _, l := range rec.lines() {
@@ -85,7 +90,14 @@ func TestUp_recreatesOnlyOnChange(t *testing.T) {
 		}
 	}
 	s.Config.Domain = "example.org"
-	if err := s.Up(ctx, false); err != nil {
+	n := len(rec.lines())
+	if err := s.Up(ctx, RenderOptions{}); !errors.Is(err, ErrRenderCanceled) {
+		t.Fatalf("a change without --force: %v, want canceled", err)
+	}
+	if len(rec.lines()) != n {
+		t.Fatalf("a canceled up ran %v", rec.lines()[n:])
+	}
+	if err := s.Up(ctx, RenderOptions{Force: true}); err != nil {
 		t.Fatal(err)
 	}
 	last := rec.lines()[len(rec.lines())-1]
@@ -265,5 +277,33 @@ func TestCompose_podmanEnv(t *testing.T) {
 	}
 	if len(rec.cmds[0].Env) != 0 {
 		t.Errorf("docker env: %v", rec.cmds[0].Env)
+	}
+}
+
+// A command running on the rendered files (ps, logs, down...) warns when
+// dev.yaml changed since, and runs on them as they are; with none, it fails.
+func TestCompose_onRenderedFiles(t *testing.T) {
+	var errOut strings.Builder
+	s, rec := testStack(t, "", StackOptions{})
+	s.stderr = &errOut
+	kayra := read(t, filepath.Join(s.Out, "kayra.yaml"))
+
+	s.Config.Domain = "example.org"
+	if err := s.Compose(context.Background(), "ps"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut.String(), "warning: .infrapi-dev differs from dev.yaml (env, example.env, kayra.yaml") {
+		t.Errorf("no warning: %q", errOut.String())
+	}
+	if read(t, filepath.Join(s.Out, "kayra.yaml")) != kayra {
+		t.Error("ps rendered kayra.yaml")
+	}
+	if l := rec.lines(); len(l) != 1 || !strings.HasSuffix(l[0], " ps") {
+		t.Errorf("ran %v", l)
+	}
+
+	s.Out = filepath.Join(t.TempDir(), ".infrapi-dev")
+	if err := s.Compose(context.Background(), "ps"); err == nil || !strings.Contains(err.Error(), "dev up --force") {
+		t.Errorf("not rendered: %v", err)
 	}
 }

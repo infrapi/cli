@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/infrapi/cli/internal/ui"
+
 	"charm.land/huh/v2"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/hay-kot/scaffold/app/core/engine"
@@ -80,6 +82,9 @@ func Init(o InitOptions, out io.Writer) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("dev init: template %s: %w", o.Template, err)
 	}
+	if err := refresh(o.Template, o.Cache, path, out); err != nil {
+		return "", err
+	}
 
 	template := os.DirFS(path)
 	p, err := scaffold.LoadProject(template, scaffold.Options{NoClobber: !o.Force})
@@ -127,6 +132,36 @@ func Init(o InitOptions, out io.Writer) (string, error) {
 		_, _ = fmt.Fprintln(out, strings.TrimSpace(rendered))
 	}
 	return filepath.Join(o.Dir, p.Name), nil
+}
+
+// refresh pulls the cached clone of a remote template that follows a
+// branch: scaffold clones it once, then reuses it as it is. A template
+// pinned to a tag (…/dev@v1.2.0) is kept; a failed pull, offline say, keeps
+// the cached copy, with a warning.
+func refresh(template, cache, path string, out io.Writer) error {
+	remote, ok := pkgs.IsRemote(template, nil)
+	if !ok {
+		return nil
+	}
+	pkg, err := pkgs.ParseRemote(remote)
+	if err != nil {
+		return err
+	}
+	if pkg.Version != "" && !strings.EqualFold(pkg.Version, "head") {
+		return nil
+	}
+	rel, err := filepath.Rel(cache, path)
+	if err != nil {
+		return err
+	}
+	updated, err := pkgs.Update(cache, rel)
+	switch {
+	case err != nil:
+		_, _ = fmt.Fprintf(ui.Writer(out), "%s template %s: not updated, using the copy in %s: %v\n", ui.Warn("warning:"), template, cache, err)
+	case updated:
+		_, _ = fmt.Fprintf(ui.Writer(out), "template %s: %s\n", ui.Name(template), ui.OK("updated"))
+	}
+	return nil
 }
 
 // defaults fills vars with the default of every question it has no answer

@@ -10,6 +10,26 @@ Every command here talks to a Kayra server's own API, through a saved
 context (`login`, `context set`). The dev stack's commands are in
 [dev](dev.md).
 
+## Colors
+
+On a terminal, infrapi-cli colors what it prints: tables' headers, errors
+and warnings, JSON and YAML (`-o json`, `-o yaml`), and the dev stack's
+diffs. It uses the terminal's own 16 colors, so they follow its theme,
+light or dark.
+
+Colors are off, with no escape sequence at all, when:
+
+- the output is not a terminal: a pipe, a file, a script reading it;
+- `NO_COLOR` is set to anything but an empty value
+  ([no-color.org](https://no-color.org));
+- `--no-color` is given, a global flag, before or after the command.
+
+```bash
+infrapi-cli get catalog apiregistrations -o json | jq .   # plain: a pipe
+NO_COLOR=1 infrapi-cli apis                               # plain
+infrapi-cli apis --no-color                               # plain
+```
+
 ## Logging in
 
 The portable, end-user client of a Kayra server — hand someone this

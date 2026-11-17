@@ -25,7 +25,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
+
+	"github.com/infrapi/cli/internal/ui"
 
 	"github.com/urfave/cli/v3"
 
@@ -203,7 +206,7 @@ func printVerbResponse(stdout, stderr io.Writer, output, verb, resource, name, n
 	}
 	if len(bytes.TrimSpace(body)) == 0 {
 		if verb == "delete" {
-			_, err := fmt.Fprintf(stdout, "%s %q deleted\n", resource, name)
+			_, err := fmt.Fprintf(ui.Writer(stdout), "%s %s %s\n", resource, ui.Name(strconv.Quote(name)), ui.OK("deleted"))
 			return err
 		}
 		return nil

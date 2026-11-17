@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/infrapi/cli/internal/ui"
+
 	"github.com/infrapi/cli/internal/clicontext"
 )
 
@@ -164,7 +166,7 @@ func findConfig() (string, error) {
 
 // osExec runs c with os/exec, printing its command line first.
 func osExec(ctx context.Context, c Cmd, stdout, stderr io.Writer) (string, error) {
-	_, _ = fmt.Fprintf(stderr, "+ %s\n", strings.Join(c.Args, " "))
+	_, _ = fmt.Fprintln(ui.Writer(stderr), ui.Faint("+ "+strings.Join(c.Args, " ")))
 	cmd := exec.CommandContext(ctx, c.Args[0], c.Args[1:]...) //#nosec G204 -- the stack's own commands, from its flags and dev.yaml
 	cmd.Dir = c.Dir
 	cmd.Env = append(os.Environ(), c.Env...)
@@ -205,8 +207,16 @@ func (s *Stack) composeArgs(args ...string) []string {
 		// docker on Linux has no host.docker.internal of its own
 		a = append(a, "-f", "compose.docker.yaml")
 	}
+	// yours: compose does not read it by itself once -f is given
+	if _, err := os.Stat(filepath.Join(s.Dir, composeOverride)); err == nil {
+		a = append(a, "-f", composeOverride)
+	}
 	return append(a, args...)
 }
+
+// composeOverride is the stack's own compose file, when it has one: what
+// compose.yaml does not cover, a service added say.
+const composeOverride = "compose.override.yaml"
 
 // composeEnv is compose's environment: podman compose, which runs an
 // external provider (podman-compose, docker-compose), says so on every call
@@ -218,21 +228,90 @@ func (s *Stack) composeEnv() []string {
 	return nil
 }
 
-// Compose runs compose with args, the stack rendered first.
+// Compose runs compose with args, on the stack's files as rendered.
 func (s *Stack) Compose(ctx context.Context, args ...string) error {
-	if _, err := s.Render(false); err != nil {
+	if err := s.rendered(); err != nil {
 		return err
 	}
 	return s.run(ctx, Cmd{Args: s.composeArgs(args...), Env: s.composeEnv()})
 }
 
-// Render renders the stack's files into Out.
-func (s *Stack) Render(newKeys bool) (Rendered, error) {
-	r, err := Render(s.Config, s.Out, newKeys)
+// ErrRenderCanceled is a render that would change a file, without
+// --force: nothing was written.
+var ErrRenderCanceled = errors.New("render canceled: nothing written, see above")
+
+// Render renders the stack's files into Out, and prints the diff of what
+// changed. Without o.Force, a render that would change a file writes
+// nothing: it prints the diff, how to make the change in dev.yaml, and
+// returns ErrRenderCanceled.
+func (s *Stack) Render(o RenderOptions) (Rendered, error) {
+	r, err := Render(s.Config, s.Out, o)
 	if err != nil {
 		return r, err
 	}
+	if r.Diff != "" {
+		_ = ui.Highlight(s.stdout, "diff", r.Diff)
+	}
+	if r.Pending {
+		s.explain(r)
+		return r, ErrRenderCanceled
+	}
 	return r, s.readable()
+}
+
+// sources says where each rendered file comes from: what to change in
+// dev.yaml instead of the file.
+var sources = []struct{ prefix, from string }{
+	{"kayra.yaml", "domain, platform, region, location, sysadmin_groups, ports.kayra, users; anything else: kayra.config"},
+	{"users.yaml", "users"},
+	{"env", "domain, platform, kayra.image or kayra.src, ports, example; anything else: compose.env"},
+	{"example.env", "domain, platform, region, location, ports.gateway, example; anything else: example.env"},
+	{"routes/", "domain, ports, example; a route changed, added or removed (null): gateway.routes.<id>. Your API's route: infrapi-cli dev api add"},
+	{"keys/", "kayra.keys.self, kayra.keys.local for keys of your own; --new-keys for new ones"},
+}
+
+// explain says why a render was canceled, and how to go on.
+func (s *Stack) explain(r Rendered) {
+	out := ui.Writer(s.stderr)
+	_, _ = fmt.Fprintf(out, "\n%s nothing written to %s: it differs from what %s renders, the diff above.\n\n",
+		ui.Warn("render canceled:"), s.Out, ConfigName)
+	_, _ = fmt.Fprintf(out, "  The files in %s are rendered from %s: change %s, not them. Each file, from %s's:\n",
+		ui.Name(filepath.Base(s.Out)), ConfigName, ui.Name(ConfigName), ConfigName)
+	seen := map[string]bool{}
+	for _, f := range r.Files {
+		f = filepath.ToSlash(f)
+		for _, src := range sources {
+			if (f == src.prefix || strings.HasSuffix(src.prefix, "/") && strings.HasPrefix(f, src.prefix)) && !seen[src.prefix] {
+				seen[src.prefix] = true
+				_, _ = fmt.Fprintf(out, "    %s %s\n", ui.Bold(fmt.Sprintf("%-12s", src.prefix)), src.from)
+			}
+		}
+	}
+	if k := keepYAML(r.Keep, "    "); k != "" {
+		_, _ = fmt.Fprintf(out, "\n  To keep what %s has, an edit made by hand say, add this to %s:\n\n", filepath.Base(s.Out), ui.Name(ConfigName))
+		_ = ui.Highlight(out, "yaml", k)
+	}
+	_, _ = fmt.Fprintf(out, "\n  Then, or to write %s's change as it is:\n    %s\n\n",
+		ConfigName, ui.Cmd("infrapi-cli dev up --force")+"   (or "+ui.Cmd("infrapi-cli dev render --force")+")")
+}
+
+// rendered checks the stack's files are rendered, for a command that runs
+// on them as they are (ps, logs, down, token...): it warns when they differ
+// from dev.yaml, and fails when there are none.
+func (s *Stack) rendered() error {
+	r, err := Render(s.Config, s.Out, RenderOptions{})
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(s.Out, "env")); err != nil {
+		return fmt.Errorf("%s is not rendered: infrapi-cli dev up --force", s.Out)
+	}
+	if r.Pending {
+		_, _ = fmt.Fprintf(ui.Writer(s.stderr), "%s %s differs from %s (%s): %s shows the diff, %s writes it\n",
+			ui.Warn("warning:"), filepath.Base(s.Out), ConfigName, strings.Join(r.Files, ", "),
+			ui.Cmd("infrapi-cli dev render"), ui.Cmd("infrapi-cli dev up --force"))
+	}
+	return nil
 }
 
 // mounted are the stack's own files compose.yaml mounts into the
@@ -267,7 +346,7 @@ func (s *Stack) readable() error {
 func (s *Stack) Build(ctx context.Context) error {
 	src := s.Config.Kayra.Src
 	if src == "" {
-		_, _ = fmt.Fprintf(s.stdout, "build: kayra.src is not set in %s: the stack runs %s, nothing to build\n", ConfigName, s.Config.Kayra.Image)
+		_, _ = fmt.Fprintf(ui.Writer(s.stdout), "build: kayra.src is not set in %s: the stack runs %s, %s\n", ConfigName, ui.Name(s.Config.Kayra.Image), ui.Warn("nothing to build"))
 		return nil
 	}
 	if !filepath.IsAbs(src) {
@@ -284,8 +363,8 @@ func (s *Stack) Build(ctx context.Context) error {
 // reconciler and gateway-init are recreated when what they read changed
 // since they started: compose recreates a service whose image, ports or
 // environment changed, not one whose mounted file did.
-func (s *Stack) Up(ctx context.Context, newKeys bool) error {
-	r, err := s.Render(newKeys)
+func (s *Stack) Up(ctx context.Context, o RenderOptions) error {
+	r, err := s.Render(o)
 	if err != nil {
 		return err
 	}
@@ -303,14 +382,16 @@ func (s *Stack) Up(ctx context.Context, newKeys bool) error {
 		return err
 	}
 	if running != "" && r.Kayra {
-		_, _ = fmt.Fprintf(s.stdout, "up: %s changed: recreating kayra, reconciler and gateway-init\n", ConfigName)
+		_, _ = fmt.Fprintf(ui.Writer(s.stdout), "up: %s changed: %s\n", ConfigName, ui.Warn("recreating kayra, reconciler and gateway-init"))
 		if err := s.run(ctx, Cmd{Args: s.composeArgs("up", "-d", "--force-recreate", "--no-deps", "kayra", "reconciler", "gateway-init"), Env: s.composeEnv()}); err != nil {
 			return err
 		}
 	}
 	p := s.Config.Ports
-	_, _ = fmt.Fprintf(s.stdout, "\n  Kayra   http://localhost:%d   gateway http://localhost:%d   APISIX Admin API http://localhost:%d\n  next:   infrapi-cli dev contexts\n",
-		p.Kayra, p.Gateway, p.Admin)
+	url := func(port int) string { return ui.URL(fmt.Sprintf("http://localhost:%d", port)) }
+	_, _ = fmt.Fprintf(ui.Writer(s.stdout), "\n  %s   %s   %s %s   %s %s\n  %s   %s\n",
+		ui.Bold("Kayra"), url(p.Kayra), ui.Bold("gateway"), url(p.Gateway), ui.Bold("APISIX Admin API"), url(p.Admin),
+		ui.Bold("next:"), ui.Cmd("infrapi-cli dev contexts"))
 	return nil
 }
 
@@ -327,7 +408,7 @@ func (s *Stack) ResetKayra(ctx context.Context) error {
 // kayra container, for 8 hours. provider is self (groups as given) or local
 // (groups from dev.yaml's users).
 func (s *Stack) Mint(ctx context.Context, provider, subject string, groups ...string) (string, error) {
-	if _, err := s.Render(false); err != nil {
+	if err := s.rendered(); err != nil {
 		return "", err
 	}
 	args := []string{"exec", "-T", "kayra", "kayra", "token", "mint", "--provider", provider, "--ttl", "8h"}
@@ -399,11 +480,11 @@ func (s *Stack) Health(ctx context.Context) error {
 			_ = resp.Body.Close()
 			status = resp.Status
 			if resp.StatusCode == http.StatusOK {
-				_, _ = fmt.Fprintf(s.stdout, "  ok       %-8s %s\n", check.name, check.url)
+				_, _ = fmt.Fprintf(ui.Writer(s.stdout), "  %s %s %s\n", ui.OK("ok      "), ui.Bold(fmt.Sprintf("%-8s", check.name)), check.url)
 				continue
 			}
 		}
-		_, _ = fmt.Fprintf(s.stdout, "  FAILING  %-8s %s: %s\n", check.name, check.url, status)
+		_, _ = fmt.Fprintf(ui.Writer(s.stdout), "  %s %s %s: %s\n", ui.Fail("FAILING "), ui.Bold(fmt.Sprintf("%-8s", check.name)), check.url, status)
 		failed = append(failed, check.name)
 	}
 	if len(failed) > 0 {
@@ -412,18 +493,26 @@ func (s *Stack) Health(ctx context.Context) error {
 	return nil
 }
 
-// Routes puts the stack's own routes back into the gateway, as rendered.
+// Routes puts the stack's own routes back into the gateway, dev.yaml's
+// gateway.routes merged in, and deletes the ones it removes.
 func (s *Stack) Routes(ctx context.Context) error {
-	routes, err := gatewayRoutes(s.Config)
+	routes, removed, err := stackRoutes(s.Config)
 	if err != nil {
 		return err
 	}
 	g := s.Gateway()
+	out := ui.Writer(s.stdout)
 	for _, r := range routes {
 		if err := g.PutRoute(ctx, r.ID, r.Body); err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintf(s.stdout, "routes: %s\n", r.ID)
+		_, _ = fmt.Fprintf(out, "routes: %s\n", ui.Name(r.ID))
+	}
+	for _, id := range removed {
+		if err := g.DeleteRoute(ctx, id); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(out, "routes: %s %s\n", ui.Name(id), ui.OK("removed"))
 	}
 	return nil
 }
@@ -436,7 +525,7 @@ func (s *Stack) Gateway() *Gateway {
 // Example runs the example API on the host, with its rendered settings,
 // against libSrc, a lib checkout, when set.
 func (s *Stack) Example(ctx context.Context, dir, libSrc string) error {
-	if _, err := s.Render(false); err != nil {
+	if err := s.rendered(); err != nil {
 		return err
 	}
 	if !filepath.IsAbs(dir) {

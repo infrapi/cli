@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/infrapi/cli/internal/ui"
 
 	"github.com/urfave/cli/v3"
 
@@ -47,8 +50,8 @@ func devCommand() *cli.Command {
 			},
 			{
 				Name:   "render",
-				Usage:  "render .infrapi-dev/ from dev.yaml: Kayra's configuration and keys, the gateway's routes, the env compose reads",
-				Flags:  []cli.Flag{newKeysFlag()},
+				Usage:  "show what dev.yaml changes in .infrapi-dev/, as a diff; --force writes it",
+				Flags:  []cli.Flag{newKeysFlag(), forceFlag()},
 				Action: withStack(runDevRender),
 			},
 			{
@@ -58,10 +61,10 @@ func devCommand() *cli.Command {
 			},
 			{
 				Name:  "up",
-				Usage: "render, build if kayra.src is set, start the stack; recreate Kayra when its configuration changed",
-				Flags: []cli.Flag{newKeysFlag()},
+				Usage: "render, build if kayra.src is set, start the stack; recreate Kayra when its configuration changed. A render that would change .infrapi-dev/ is canceled without --force",
+				Flags: []cli.Flag{newKeysFlag(), forceFlag()},
 				Action: withStack(func(ctx context.Context, cmd *cli.Command, s *dev.Stack) error {
-					return s.Up(ctx, cmd.Bool("new-keys"))
+					return s.Up(ctx, dev.RenderOptions{NewKeys: cmd.Bool("new-keys"), Force: cmd.Bool("force")})
 				}),
 			},
 			composeCommand("down", "stop the stack, keep etcd's data", "down"),
@@ -142,6 +145,10 @@ func devCommand() *cli.Command {
 	}
 }
 
+func forceFlag() cli.Flag {
+	return &cli.BoolFlag{Name: "force", Usage: "write the render's changes to .infrapi-dev/, dropping any edit made there by hand: without it, a render that would change a file writes nothing and shows the diff"}
+}
+
 func newKeysFlag() cli.Flag {
 	return &cli.BoolFlag{Name: "new-keys", Usage: "generate new signing keys: every token minted before is refused"}
 }
@@ -201,24 +208,38 @@ func runDevInit(_ context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("\n  %s is ready:\n\n    cd %s\n    infrapi-cli dev doctor\n    infrapi-cli dev up\n    infrapi-cli dev contexts\n\n", dir, dir)
+	// a new stack: nothing to overwrite yet, so dev up has nothing to ask
+	s, err := dev.OpenStack(dev.StackOptions{Config: filepath.Join(dir, dev.ConfigName)})
+	if err != nil {
+		return err
+	}
+	if _, err := s.Render(dev.RenderOptions{Force: true}); err != nil {
+		return err
+	}
+	out := ui.Stdout()
+	_, _ = fmt.Fprintf(out, "\n  %s is %s\n\n", ui.Name(dir), ui.OK("ready:"))
+	for _, c := range []string{"cd " + dir, "infrapi-cli dev doctor", "infrapi-cli dev up", "infrapi-cli dev contexts"} {
+		_, _ = fmt.Fprintf(out, "    %s\n", ui.Cmd(c))
+	}
+	_, _ = fmt.Fprintln(out)
 	return nil
 }
 
 func runDevDoctor(ctx context.Context, _ *cli.Command, s *dev.Stack) error {
 	missing := 0
+	out := ui.Stdout()
 	for _, c := range s.Doctor(ctx) {
-		state := "ok"
+		state := ui.OK(fmt.Sprintf("%-8s", "ok"))
 		switch {
 		case !c.OK && c.Optional:
-			state = "optional"
+			state = ui.Warn(fmt.Sprintf("%-8s", "optional"))
 		case !c.OK:
-			state = "MISSING"
+			state = ui.Fail(fmt.Sprintf("%-8s", "MISSING"))
 			missing++
 		}
-		fmt.Printf("  %-8s %-8s %s\n", state, c.Name, c.Detail)
+		_, _ = fmt.Fprintf(out, "  %s %s %s\n", state, ui.Bold(fmt.Sprintf("%-8s", c.Name)), c.Detail)
 	}
-	fmt.Printf("\n  engine %s, the host seen from the containers as %s\n", s.Engine, s.HostAlias)
+	_, _ = fmt.Fprintf(out, "\n  engine %s, the host seen from the containers as %s\n", ui.Name(s.Engine), ui.Name(s.HostAlias))
 	if missing > 0 {
 		return fmt.Errorf("doctor: %d prerequisite(s) missing", missing)
 	}
@@ -226,14 +247,21 @@ func runDevDoctor(ctx context.Context, _ *cli.Command, s *dev.Stack) error {
 }
 
 func runDevRender(_ context.Context, cmd *cli.Command, s *dev.Stack) error {
-	if _, err := s.Render(cmd.Bool("new-keys")); err != nil {
+	r, err := s.Render(dev.RenderOptions{NewKeys: cmd.Bool("new-keys"), Force: cmd.Bool("force")})
+	if err != nil {
 		return err
+	}
+	out := ui.Stdout()
+	if r.Diff == "" {
+		_, _ = fmt.Fprintf(out, "render: %s %s\n", s.Out, ui.OK("up to date"))
+	} else {
+		_, _ = fmt.Fprintf(out, "render: %s %s\n", s.Out, ui.OK("written"))
 	}
 	image := s.Config.Kayra.Image
 	if s.Config.Kayra.Src != "" {
 		image = "built from " + s.Config.Kayra.Src
 	}
-	fmt.Printf("render: %s, domain %s, kayra %s\n", s.Out, s.Config.Domain, image)
+	_, _ = fmt.Fprintf(out, "render: %s, domain %s, kayra %s\n", s.Out, ui.Name(s.Config.Domain), ui.Name(image))
 	return nil
 }
 
@@ -242,8 +270,15 @@ func runDevContexts(ctx context.Context, _ *cli.Command, s *dev.Stack) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("contexts: %s saved, on http://localhost:%d; dev-admin is the current one\n", strings.Join(names, ", "), s.Config.Ports.Gateway)
-	fmt.Println("  next:   infrapi-cli auth whoami, then create an API: https://infrapi.github.io/products/dev/docs/create-an-api/")
+	out := ui.Stdout()
+	styled := make([]string, len(names))
+	for i, n := range names {
+		styled[i] = ui.Name(n)
+	}
+	_, _ = fmt.Fprintf(out, "contexts: %s %s, on %s; %s is the current one\n", strings.Join(styled, ", "), ui.OK("saved"),
+		ui.URL(fmt.Sprintf("http://localhost:%d", s.Config.Ports.Gateway)), ui.Name("dev-admin"))
+	_, _ = fmt.Fprintf(out, "  %s %s, then create an API: %s\n", ui.Bold("next:"), ui.Cmd("infrapi-cli auth whoami"),
+		ui.URL("https://infrapi.github.io/products/dev/docs/create-an-api/"))
 	return nil
 }
 
@@ -262,13 +297,13 @@ func runDevAPI(add bool) func(context.Context, *cli.Command, *dev.Stack) error {
 			if err := g.RemoveAPI(ctx, api); err != nil {
 				return err
 			}
-			fmt.Printf("api: %s removed\n", api)
+			_, _ = fmt.Fprintf(ui.Stdout(), "api: %s %s\n", ui.Name(api), ui.OK("removed"))
 			return nil
 		}
 		if err := g.AddAPI(ctx, api, upstream); err != nil {
 			return err
 		}
-		fmt.Printf("api: /apis/%s/* -> %s\n", api, upstream)
+		_, _ = fmt.Fprintf(ui.Stdout(), "api: %s -> %s\n", ui.Name("/apis/"+api+"/*"), ui.Name(upstream))
 		return nil
 	}
 }

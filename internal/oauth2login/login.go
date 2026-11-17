@@ -39,6 +39,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/infrapi/cli/internal/ui"
+
 	"golang.org/x/oauth2"
 
 	liberrors "github.com/infrapi/lib/pkg/errors"
@@ -113,9 +115,9 @@ func LoginToServer(ctx context.Context, serverBaseURL string, stderr io.Writer) 
 	go func() { _ = srv.Serve(listener) }()
 	defer func() { _ = srv.Close() }()
 
-	_, _ = fmt.Fprintf(stderr, "oauth2login: opening browser to log in:\n\n  %s\n\n", authURL)
+	_, _ = fmt.Fprintf(ui.Writer(stderr), "oauth2login: opening browser to log in:\n\n  %s\n\n", ui.URL(authURL))
 	if err := OpenBrowser(authURL); err != nil {
-		_, _ = fmt.Fprintf(stderr, "oauth2login: could not open a browser automatically (%v) — open the URL above by hand\n", err)
+		_, _ = fmt.Fprintf(ui.Writer(stderr), "oauth2login: %s (%v) — open the URL above by hand\n", ui.Warn("could not open a browser automatically"), err)
 	}
 
 	var result callbackResult
@@ -196,8 +198,8 @@ func LoginToServerManual(ctx context.Context, serverBaseURL string, stdin io.Rea
 		return nil, err
 	}
 
-	_, _ = fmt.Fprintf(stderr, "oauth2login: open this URL in a browser on any machine to log in:\n\n  %s\n\n", authURL)
-	_, _ = fmt.Fprint(stderr, "Paste the login code shown in the browser: ")
+	_, _ = fmt.Fprintf(ui.Writer(stderr), "oauth2login: open this URL in a browser on any machine to log in:\n\n  %s\n\n", ui.URL(authURL))
+	_, _ = fmt.Fprint(ui.Writer(stderr), ui.Bold("Paste the login code shown in the browser: "))
 
 	lineCh := make(chan string, 1)
 	readErrCh := make(chan error, 1)

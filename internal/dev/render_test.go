@@ -26,7 +26,7 @@ func TestRender_domain(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	if _, err := Render(c, dir, false); err != nil {
+	if _, err := Render(c, dir, RenderOptions{Force: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -75,17 +75,17 @@ func TestRender_keys(t *testing.T) {
 	}
 	dir := t.TempDir()
 	key := func() string { return read(t, filepath.Join(dir, "keys", "self.pem")) }
-	if _, err := Render(c, dir, false); err != nil {
+	if _, err := Render(c, dir, RenderOptions{Force: true}); err != nil {
 		t.Fatal(err)
 	}
 	first := key()
-	if _, err := Render(c, dir, false); err != nil {
+	if _, err := Render(c, dir, RenderOptions{Force: true}); err != nil {
 		t.Fatal(err)
 	}
 	if key() != first {
 		t.Fatal("a render without newKeys changed the keys")
 	}
-	if _, err := Render(c, dir, true); err != nil {
+	if _, err := Render(c, dir, RenderOptions{NewKeys: true, Force: true}); err != nil {
 		t.Fatal(err)
 	}
 	if key() == first {
@@ -117,7 +117,7 @@ func TestRender_unchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	if _, err := Render(c, dir, false); err != nil {
+	if _, err := Render(c, dir, RenderOptions{Force: true}); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "kayra.yaml")
@@ -125,14 +125,14 @@ func TestRender_unchanged(t *testing.T) {
 	if err := os.Chtimes(path, past, past); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Render(c, dir, false); err != nil {
+	if _, err := Render(c, dir, RenderOptions{Force: true}); err != nil {
 		t.Fatal(err)
 	}
 	if st, _ := os.Stat(path); !st.ModTime().Equal(past) {
 		t.Error("an unchanged kayra.yaml was written again")
 	}
 	c.Domain = "example.org"
-	if _, err := Render(c, dir, false); err != nil {
+	if _, err := Render(c, dir, RenderOptions{Force: true}); err != nil {
 		t.Fatal(err)
 	}
 	if st, _ := os.Stat(path); st.ModTime().Equal(past) {
@@ -148,19 +148,101 @@ func TestRender_reportsKayraChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	r, err := Render(c, dir, false)
+	r, err := Render(c, dir, RenderOptions{Force: true})
 	if err != nil || !r.Kayra {
 		t.Fatalf("first render: %+v %v, want Kayra changed", r, err)
 	}
-	if r, err = Render(c, dir, false); err != nil || r.Kayra {
+	if r, err = Render(c, dir, RenderOptions{Force: true}); err != nil || r.Kayra {
 		t.Fatalf("same render: %+v %v, want nothing changed", r, err)
 	}
 	c.Example.Port = 18080 // example.env and env only
-	if r, err = Render(c, dir, false); err != nil || r.Kayra {
+	if r, err = Render(c, dir, RenderOptions{Force: true}); err != nil || r.Kayra {
 		t.Fatalf("example port: %+v %v, want Kayra unchanged", r, err)
 	}
 	c.Domain = "example.org"
-	if r, err = Render(c, dir, false); err != nil || !r.Kayra {
+	if r, err = Render(c, dir, RenderOptions{Force: true}); err != nil || !r.Kayra {
 		t.Fatalf("domain: %+v %v, want Kayra changed", r, err)
+	}
+}
+
+// Without Force, a render that would change a file writes nothing: its
+// diff shows what it would do, a file edited by hand in the render's dir
+// included.
+func TestRender_cancelsWithoutForce(t *testing.T) {
+	c, err := LoadConfig(writeConfig(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), ".infrapi-dev")
+
+	r, err := Render(c, dir, RenderOptions{})
+	if err != nil || !r.Pending {
+		t.Fatalf("first render: %+v %v, want pending", r, err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("a canceled render created %s: %v", dir, err)
+	}
+	for _, want := range []string{"keys/self.pem: new signing key sha256:", "kayra.yaml: new file\n"} {
+		if !strings.Contains(r.Diff, want) {
+			t.Errorf("first render's diff misses %q:\n%s", want, r.Diff)
+		}
+	}
+
+	if r, err = Render(c, dir, RenderOptions{Force: true}); err != nil || r.Pending || len(r.Files) == 0 {
+		t.Fatalf("forced render: %+v %v", r, err)
+	}
+	if r, err = Render(c, dir, RenderOptions{}); err != nil || r.Pending || r.Diff != "" {
+		t.Fatalf("render of a rendered stack: %+v %v, want nothing to do", r, err)
+	}
+
+	// edited by hand
+	path := filepath.Join(dir, "kayra.yaml")
+	edited := strings.Replace(read(t, path), "max_concurrent_reconciles: 5", "max_concurrent_reconciles: 50", 1)
+	if err := os.WriteFile(path, []byte(edited), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// and a change in dev.yaml: canceled too
+	c.Example.Port = 18080
+	if r, err = Render(c, dir, RenderOptions{}); err != nil || !r.Pending {
+		t.Fatalf("render: %+v %v, want pending", r, err)
+	}
+	for _, want := range []string{"--- a/kayra.yaml", "-  max_concurrent_reconciles: 50", "+  max_concurrent_reconciles: 5", "--- a/env", "+EXAMPLE_PORT=18080"} {
+		if !strings.Contains(r.Diff, want) {
+			t.Errorf("diff misses %q:\n%s", want, r.Diff)
+		}
+	}
+	if got := strings.Join(r.Files, " "); got != "env example.env kayra.yaml" {
+		t.Errorf("files = %q", got)
+	}
+	if read(t, path) != edited {
+		t.Error("a canceled render overwrote kayra.yaml")
+	}
+	if r, err = Render(c, dir, RenderOptions{Force: true}); err != nil || r.Pending || read(t, path) == edited {
+		t.Fatalf("forced render: %+v %v, kayra.yaml left as edited", r, err)
+	}
+}
+
+// The diff never prints a signing key: new keys show as fingerprints.
+func TestRender_diffHidesKeys(t *testing.T) {
+	c, err := LoadConfig(writeConfig(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if _, err := Render(c, dir, RenderOptions{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Render(c, dir, RenderOptions{NewKeys: true, Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := strings.Split(read(t, filepath.Join(dir, "keys", "self.pem")), "\n")[1]
+	if strings.Contains(r.Diff, key) {
+		t.Fatalf("the diff prints a key:\n%s", r.Diff)
+	}
+	for _, want := range []string{"keys/local.pem: new signing key", "-          -----PRIVATE KEY sha256:", "+          -----PRIVATE KEY sha256:"} {
+		if !strings.Contains(r.Diff, want) {
+			t.Errorf("the diff misses %q:\n%s", want, r.Diff)
+		}
 	}
 }

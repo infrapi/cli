@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -28,7 +29,27 @@ type Config struct {
 		Image string `yaml:"image"`
 		// Src is a Kayra checkout to build kayra-dev:local from.
 		Src string `yaml:"src"`
+		// Config is merged into the rendered kayra.yaml: a map key by key,
+		// a list or a value replaced, null removing the key.
+		Config yaml.Node `yaml:"config"`
+		// Keys are signing key files of your own, relative to dev.yaml,
+		// instead of the keys the render generates.
+		Keys struct {
+			Self  string `yaml:"self"`
+			Local string `yaml:"local"`
+		} `yaml:"keys"`
 	} `yaml:"kayra"`
+
+	Gateway struct {
+		// Routes are merged into the gateway's own routes by id: a new id
+		// is a new route, null removes one.
+		Routes map[string]yaml.Node `yaml:"routes"`
+	} `yaml:"gateway"`
+
+	Compose struct {
+		// Env is added to, or replaces in, the env compose reads.
+		Env map[string]string `yaml:"env"`
+	} `yaml:"compose"`
 
 	Ports Ports `yaml:"ports"`
 
@@ -38,7 +59,12 @@ type Config struct {
 	Example struct {
 		API  string `yaml:"api"`
 		Port int    `yaml:"port"`
+		// Env is added to, or replaces in, the example API's settings.
+		Env map[string]string `yaml:"env"`
 	} `yaml:"example"`
+
+	// dir is dev.yaml's directory: kayra.keys are relative to it.
+	dir string
 }
 
 // Ports are where the stack listens, on 127.0.0.1.
@@ -78,6 +104,7 @@ func LoadConfig(path string) (*Config, error) {
 	if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) { // empty: the defaults
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
+	c.dir = filepath.Dir(path)
 	if err := c.check(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
@@ -151,6 +178,32 @@ func (c *Config) check() error {
 	def(&c.Example.API, "compute")
 	if !dnsName.MatchString(c.FullAPI(c.Example.API)) {
 		return fmt.Errorf("example.api: %q: a lower case DNS label, or a full DNS name", c.Example.API)
+	}
+	return c.checkOverrides()
+}
+
+// checkOverrides checks dev.yaml's overrides of the rendered files.
+func (c *Config) checkOverrides() error {
+	if n := &c.Kayra.Config; n.Kind != 0 && !isNull(n) && n.Kind != yaml.MappingNode {
+		return fmt.Errorf("kayra.config: a map, merged into kayra.yaml")
+	}
+	for id, n := range c.Gateway.Routes {
+		if !routeID.MatchString(id) {
+			return fmt.Errorf("gateway.routes.%s: a route id is lower case letters, digits, - and _", id)
+		}
+		if !isNull(&n) && n.Kind != yaml.MappingNode {
+			return fmt.Errorf("gateway.routes.%s: a route, as APISIX's Admin API takes it, or null to remove it", id)
+		}
+	}
+	for key, env := range map[string]map[string]string{"compose.env": c.Compose.Env, "example.env": c.Example.Env} {
+		for k, v := range env {
+			if !envName.MatchString(k) {
+				return fmt.Errorf("%s.%s: an environment variable name", key, k)
+			}
+			if strings.ContainsAny(v, "\n\r") {
+				return fmt.Errorf("%s.%s: one line", key, k)
+			}
+		}
 	}
 	return nil
 }

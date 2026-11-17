@@ -15,7 +15,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"text/tabwriter"
+
+	"github.com/infrapi/cli/internal/ui"
 
 	"github.com/urfave/cli/v3"
 )
@@ -137,15 +138,14 @@ func renderApis(stdout, stderr io.Writer, groups []discoveryGroup) error {
 		_, err := fmt.Fprintln(stderr, "No resources found.")
 		return err
 	}
-	w := tabwriter.NewWriter(stdout, 0, 2, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "NAME\tSHORTNAME\tAPIGROUP\tNAMESPACED\tVERBS")
+	var rows [][]string
 	for _, g := range groups {
 		short := g.ShortName
 		if short == "" {
 			short = "-"
 		}
 		if len(g.Resources) == 0 {
-			_, _ = fmt.Fprintf(w, "-\t%s\t%s\t-\t-\n", short, g.Api)
+			rows = append(rows, []string{"-", short, g.Api, "-", "-"})
 			continue
 		}
 		for _, r := range g.Resources {
@@ -153,8 +153,8 @@ func renderApis(stdout, stderr io.Writer, groups []discoveryGroup) error {
 			if verbs == "" {
 				verbs = "-"
 			}
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%t\t%s\n", r.Name, short, g.Api, r.Namespaced, verbs)
+			rows = append(rows, []string{r.Name, short, g.Api, strconv.FormatBool(r.Namespaced), verbs})
 		}
 	}
-	return w.Flush()
+	return ui.Table(stdout, []string{"NAME", "SHORTNAME", "APIGROUP", "NAMESPACED", "VERBS"}, rows, nil)
 }

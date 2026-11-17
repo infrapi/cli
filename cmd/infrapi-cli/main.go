@@ -20,13 +20,13 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/urfave/cli/v3"
 
 	"github.com/infrapi/cli/internal/clicontext"
 	"github.com/infrapi/cli/internal/oauth2login"
+	"github.com/infrapi/cli/internal/ui"
 )
 
 // version is set at build time via -ldflags "-X main.version=..." —
@@ -36,7 +36,7 @@ var version = "dev"
 
 func main() {
 	if err := newRoot().Run(context.Background(), os.Args); err != nil {
-		fmt.Fprintln(os.Stderr, "infrapi-cli:", err)
+		_, _ = fmt.Fprintln(ui.Stderr(), ui.Fail("infrapi-cli:"), err)
 		os.Exit(1)
 	}
 }
@@ -55,6 +55,16 @@ func newRoot() *cli.Command {
 				Sources: cli.EnvVars("INFRAPI_CONTEXT"),
 				Usage:   "saved context to use for this command, without changing the current one",
 			},
+			// NO_COLOR (https://no-color.org), any value but empty, is read
+			// by internal/ui: a bool flag would refuse NO_COLOR=yes
+			&cli.BoolFlag{
+				Name:  "no-color",
+				Usage: "no colors, even on a terminal; also NO_COLOR=1. Colors are off anyway when the output is not a terminal",
+				Action: func(_ context.Context, _ *cli.Command, v bool) error {
+					ui.SetNoColor(v)
+					return nil
+				},
+			},
 		},
 		Commands: append([]*cli.Command{
 			loginCommand(),
@@ -64,7 +74,7 @@ func newRoot() *cli.Command {
 			devCommand(),
 		}, verbCommands()...),
 		CommandNotFound: func(ctx context.Context, cmd *cli.Command, name string) {
-			fmt.Fprintf(os.Stderr, "infrapi-cli: unknown command %q\n\n", name)
+			_, _ = fmt.Fprintf(ui.Stderr(), "%s unknown command %q\n\n", ui.Fail("infrapi-cli:"), name)
 			_ = cli.ShowAppHelp(cmd)
 			os.Exit(2)
 		},
@@ -161,8 +171,8 @@ func runLogin(ctx context.Context, cmd *cli.Command) error {
 	// sitting in the context file this just wrote, retrievable any
 	// time via `context token`, which is the one place it should have
 	// to be read back from.
-	fmt.Fprintf(os.Stderr, "infrapi-cli: logged in — saved context %q to %s (now current)\n", name, path)
-	fmt.Println("infrapi-cli: run `infrapi-cli context token` to print the bearer token")
+	_, _ = fmt.Fprintf(ui.Stderr(), "infrapi-cli: %s saved context %s to %s (now current)\n", ui.OK("logged in:"), ui.Name(name), path)
+	_, _ = fmt.Fprintf(ui.Stdout(), "infrapi-cli: run %s to print the bearer token\n", ui.Cmd("infrapi-cli context token"))
 	return nil
 }
 
@@ -223,13 +233,13 @@ func runContextList(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	if len(f.Contexts) == 0 {
-		fmt.Println("infrapi-cli: no saved contexts — run `infrapi-cli login --server <url>`")
+		_, _ = fmt.Fprintf(ui.Stdout(), "infrapi-cli: no saved contexts — run %s\n", ui.Cmd("infrapi-cli login --server <url>"))
 		return nil
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "CURRENT\tNAME\tPROVIDER\tSERVER\tEXPIRY")
-	for _, name := range f.Names() {
+	var rows [][]string
+	names := f.Names()
+	for _, name := range names {
 		c := f.Contexts[name]
 		current := ""
 		if name == f.CurrentContext {
@@ -239,9 +249,10 @@ func runContextList(ctx context.Context, cmd *cli.Command) error {
 		if !c.Expiry.IsZero() {
 			expiry = c.Expiry.Local().Format(time.RFC3339)
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", current, name, c.Provider, c.Server, expiry)
+		rows = append(rows, []string{current, name, c.Provider, c.Server, expiry})
 	}
-	return w.Flush()
+	return ui.Table(os.Stdout, []string{"CURRENT", "NAME", "PROVIDER", "SERVER", "EXPIRY"}, rows,
+		func(i int) bool { return names[i] == f.CurrentContext })
 }
 
 func runContextCurrent(ctx context.Context, cmd *cli.Command) error {
@@ -254,14 +265,14 @@ func runContextCurrent(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	fmt.Printf("name:     %s\nprovider: %s\nserver:   %s\n", name, c.Provider, c.Server)
+	pairs := [][2]string{{"name", ui.Name(name)}, {"provider", c.Provider}, {"server", c.Server}}
 	if c.Username != "" {
-		fmt.Printf("username: %s\n", c.Username)
+		pairs = append(pairs, [2]string{"username", c.Username})
 	}
 	if !c.Expiry.IsZero() {
-		fmt.Printf("expiry:   %s\n", c.Expiry.Local().Format(time.RFC3339))
+		pairs = append(pairs, [2]string{"expiry", c.Expiry.Local().Format(time.RFC3339)})
 	}
-	return nil
+	return ui.KeyValues(os.Stdout, pairs)
 }
 
 // runContextSet saves --token as context <name> without any login
@@ -287,7 +298,7 @@ func runContextSet(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	fmt.Printf("infrapi-cli: saved context %q (now current)\n", name)
+	_, _ = fmt.Fprintf(ui.Stdout(), "infrapi-cli: %s %s (now current)\n", ui.OK("saved context"), ui.Name(name))
 	return nil
 }
 
@@ -308,7 +319,7 @@ func runContextUse(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	fmt.Printf("infrapi-cli: switched to context %q\n", name)
+	_, _ = fmt.Fprintf(ui.Stdout(), "infrapi-cli: %s %s\n", ui.OK("switched to context"), ui.Name(name))
 	return nil
 }
 
@@ -329,7 +340,7 @@ func runContextDelete(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	fmt.Printf("infrapi-cli: deleted context %q\n", name)
+	_, _ = fmt.Fprintf(ui.Stdout(), "infrapi-cli: %s %s\n", ui.OK("deleted context"), ui.Name(name))
 	return nil
 }
 
@@ -441,7 +452,7 @@ func runCanI(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	if warning := kayraOwnManagementWarning(doc, api, resource); warning != "" {
-		fmt.Fprintln(os.Stderr, "infrapi-cli: warning:", warning)
+		_, _ = fmt.Fprintln(ui.Stderr(), "infrapi-cli:", ui.Warn("warning:"), warning)
 	}
 
 	allowed, reason, err := checkAuthorized(ctx, c, doc.Endpoints.Check, cmd.String("namespace"), api, resource, verb)
@@ -450,12 +461,12 @@ func runCanI(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	if allowed {
-		fmt.Println("yes")
+		_, _ = fmt.Fprintln(ui.Stdout(), ui.OK("yes"))
 		return nil
 	}
-	fmt.Println("no")
+	_, _ = fmt.Fprintln(ui.Stdout(), ui.Fail("no"))
 	if reason != "" {
-		fmt.Fprintln(os.Stderr, "infrapi-cli:", reason)
+		_, _ = fmt.Fprintln(ui.Stderr(), "infrapi-cli:", reason)
 	}
 	os.Exit(1)
 	return nil
@@ -514,11 +525,11 @@ func runWhoami(ctx context.Context, cmd *cli.Command) error {
 	}
 	sort.Strings(names)
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	pairs := make([][2]string, 0, len(names))
 	for _, name := range names {
-		_, _ = fmt.Fprintf(w, "%s:\t%s\n", name, formatUserinfoValue(attrs[name]))
+		pairs = append(pairs, [2]string{name, formatUserinfoValue(attrs[name])})
 	}
-	return w.Flush()
+	return ui.KeyValues(os.Stdout, pairs)
 }
 
 // formatUserinfoValue renders one userinfo value for display: groups

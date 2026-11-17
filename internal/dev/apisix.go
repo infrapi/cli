@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -32,6 +33,16 @@ func (g *Gateway) AddAPI(ctx context.Context, api, upstream string) error {
 // replaced as it is.
 func (g *Gateway) PutRoute(ctx context.Context, id string, body map[string]any) error {
 	return g.call(ctx, http.MethodPut, id, body)
+}
+
+// DeleteRoute deletes the route id; one already gone is no error.
+func (g *Gateway) DeleteRoute(ctx context.Context, id string) error {
+	err := g.call(ctx, http.MethodDelete, id, nil)
+	var se *statusError
+	if errors.As(err, &se) && se.code == http.StatusNotFound {
+		return nil
+	}
+	return err
 }
 
 // RemoveAPI removes the route AddAPI added.
@@ -67,7 +78,15 @@ func (g *Gateway) call(ctx context.Context, method, id string, body any) error {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("APISIX %s route %s: %d %s", method, id, resp.StatusCode, strings.TrimSpace(string(data)))
+		return &statusError{code: resp.StatusCode, msg: fmt.Sprintf("APISIX %s route %s: %d %s", method, id, resp.StatusCode, strings.TrimSpace(string(data)))}
 	}
 	return nil
 }
+
+// statusError is an Admin API answer other than 2xx.
+type statusError struct {
+	code int
+	msg  string
+}
+
+func (e *statusError) Error() string { return e.msg }

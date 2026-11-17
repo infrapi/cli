@@ -20,9 +20,9 @@ for what runs and how.
 |---|---|---|
 | `dev init [name]` | scaffolds a new stack in `./<name>` | Go, [scaffold](https://github.com/hay-kot/scaffold) |
 | `dev doctor` | checks the prerequisites: podman or docker, its compose, go | `<engine> --version`, `<engine> compose version`, `go version` |
-| `dev render [--new-keys]` | renders `.infrapi-dev/` from `dev.yaml` | Go |
+| `dev render [--new-keys] [--force]` | shows what `dev.yaml` changes in `.infrapi-dev/`, as a diff; `--force` writes it | Go |
 | `dev build` | builds `kayra-dev:local` from `kayra.src` | `podman build --format docker`, or `docker build` |
-| `dev up [--new-keys]` | renders, builds if `kayra.src` is set, starts the stack | `<engine> compose up -d` |
+| `dev up [--new-keys] [--force]` | renders, builds if `kayra.src` is set, starts the stack; stops on a change to `.infrapi-dev/` without `--force` | `<engine> compose up -d` |
 | `dev down` | stops the stack, keeps etcd's data | `compose down` |
 | `dev clean` | stops it and wipes etcd | `compose down -v` |
 | `dev reset-kayra` | wipes Kayra's objects only, keeps the routes and keys | `compose exec etcd etcdctl del --prefix /kayra`, `compose restart kayra reconciler` |
@@ -80,8 +80,11 @@ It renders [infrapi/dev](https://github.com/infrapi/dev), a
 [scaffold](https://github.com/hay-kot/scaffold), into `./<name>`. It asks
 for the domain, the platform, the region and Kayra's image, and writes the
 answers into the stack's `dev.yaml`. The rest of the stack is copied as
-it is. The template is cloned once into `~/.cache/infrapi/templates`
-(the OS's user cache directory), and reused after.
+it is. The template is cloned into `~/.cache/infrapi/templates`
+(the OS's user cache directory), then pulled at every `dev init`, so a
+new stack starts from the template's latest commit. A template pinned to
+a tag (`…/dev@v1.2.0`) is not pulled. Offline, the pull fails with a
+warning and the cached copy is used.
 
 | Flag | Default | |
 |---|---|---|
@@ -98,12 +101,13 @@ infrapi-cli dev init --no-prompt --set domain=example.org --set platform=preprod
 ```
 
 Everything else, the ports, the users, the example API, is in
-`dev.yaml`: edit it, then `infrapi-cli dev up`.
+`dev.yaml`: edit it, then `infrapi-cli dev up --force`. `dev init`
+renders `.infrapi-dev/` once, so the first `dev up` needs no `--force`.
 
 ## dev up
 
 ```bash
-infrapi-cli dev up [--new-keys]
+infrapi-cli dev up [--new-keys] [--force]
 # + podman compose --env-file .infrapi-dev/env -f compose.yaml ps -q
 # + podman compose --env-file .infrapi-dev/env -f compose.yaml up -d
 ```
@@ -114,24 +118,71 @@ stack was running and the render changed what Kayra, its reconciler or
 `gateway-init` read (`kayra.yaml`, `users.yaml`, the routes), it recreates
 those three: compose alone would not, since only a file they mount changed.
 
+Without `--force`, a render that would change a file in `.infrapi-dev/`,
+from `dev.yaml` or from an edit made there by hand, is canceled before
+anything starts: see [dev render](#dev-render).
+
 ## dev render
 
 ```bash
-infrapi-cli dev render [--new-keys]
+infrapi-cli dev render [--new-keys] [--force]
 ```
 
-It writes what the stack runs with into `.infrapi-dev/`, in the stack's
-directory. Every other command renders first, so you rarely need it alone.
+It shows what `dev.yaml` changes in `.infrapi-dev/`, in the stack's
+directory, as a diff, and writes nothing. `--force` writes it, and drops
+any edit made by hand there.
+
+Every render works that way, `dev up`'s included: a render that would
+create, change or remove a file is canceled without `--force`. It prints
+the diff, says which setting of `dev.yaml` each changed file comes from,
+and exits 1. `dev init` renders the new stack once. The commands that run
+on the files (`ps`, `logs`, `down`, `contexts`, `example`...) take them as
+they are, with a warning when they differ from `dev.yaml`.
+
+```bash
+infrapi-cli dev render
+# --- a/kayra.yaml
+# +++ b/kayra.yaml
+# @@ -66,7 +66,7 @@
+#  reconciler:
+# -  max_concurrent_reconciles: 50
+# +  max_concurrent_reconciles: 5
+#
+# render canceled: nothing written to …/compute/.infrapi-dev: it differs from what dev.yaml renders, the diff above.
+#
+#   The files in .infrapi-dev are rendered from dev.yaml: change dev.yaml, not them. Each file, from dev.yaml's:
+#     kayra.yaml   domain, platform, region, location, sysadmin_groups, ports.kayra, users; anything else: kayra.config
+#
+#   To keep what .infrapi-dev has, an edit made by hand say, add this to dev.yaml:
+#
+#     kayra:
+#       config:
+#         reconciler:
+#           max_concurrent_reconciles: 50
+#
+#   Then, or to write dev.yaml's change as it is:
+#     infrapi-cli dev up --force   (or infrapi-cli dev render --force)
+```
+
+When a file differs from the render, an edit made by hand say, the
+message also gives what to add to `dev.yaml` to keep it: every rendered
+file takes overrides from `dev.yaml` (`kayra.config`, `kayra.keys`,
+`gateway.routes`, `example.env`, `compose.env`), see
+[Override anything](https://infrapi.github.io/dev/dev-stack/#override-anything).
+
+A new file is only named (`kayra.yaml: new file`). The diff never prints a signing key: a key shows as its fingerprint,
+`-----PRIVATE KEY sha256:…-----`, and a new one as
+`keys/self.pem: new signing key sha256:…`.
 
 | File | |
 |---|---|
 | `env` | the domain, image and ports, for `compose --env-file` |
 | `kayra.yaml`, `users.yaml` | Kayra's configuration and users, mounted into both Kayra services |
 | `keys/*.pem` | the signing keys, generated once and kept; `--new-keys` generates new ones, refusing every token minted before |
-| `routes/*.json` | the gateway's own routes |
+| `routes/*.json`, `routes/removed` | the gateway's own routes, and the ids `dev.yaml` removes |
 | `example.env` | the example API's settings |
 
-A file is written only when its content changes. `dev.yaml` is checked
+`dev.yaml` is checked
 first: an unknown key, a malformed name, a platform infrapi/lib does not
 take, or a port used twice is refused.
 
