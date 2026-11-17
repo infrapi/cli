@@ -22,6 +22,11 @@ import (
 //	example.env    example.env
 //	env            compose.env
 //	keys/*.pem     kayra.keys.self, kayra.keys.local: a key file of your own
+//	apisix/config.yaml  gateway.config
+//
+// compose.yaml, compose.docker.yaml, apisix/routes.sh and kayra/Dockerfile
+// are infrapi-cli's own: a compose.override.yaml beside dev.yaml is read
+// after compose.yaml.
 
 var (
 	envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -236,7 +241,11 @@ func keep(was, now map[string][]byte) map[string]any {
 	for _, name := range names {
 		old, cur := was[name], now[name]
 		switch {
-		case name == "kayra.yaml":
+		case name == "kayra.yaml" || name == "apisix/config.yaml":
+			key := []string{"kayra", "config"}
+			if name == "apisix/config.yaml" {
+				key = []string{"gateway", "config"}
+			}
 			var o, n any
 			if yaml.Unmarshal(old, &o) != nil || yaml.Unmarshal(cur, &n) != nil {
 				continue
@@ -247,7 +256,7 @@ func keep(was, now map[string][]byte) map[string]any {
 				if s, ok := v.(string); ok && strings.Contains(s, "PRIVATE KEY") {
 					continue
 				}
-				put(v, append([]string{"kayra", "config"}, strings.Split(path, "\x00")...)...)
+				put(v, append(append([]string{}, key...), strings.Split(path, "\x00")...)...)
 			}
 		case name == "env" || name == "example.env":
 			key := []string{"compose", "env"}

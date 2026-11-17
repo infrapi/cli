@@ -55,8 +55,11 @@ or from the environment:
 | `--build-command` | `BUILD` | `podman build --format docker`, or `docker build` | the image build command |
 | `--host-alias` | `HOST_ALIAS` | `host.containers.internal`, or `host.docker.internal` | the host's name in the containers, where `dev api add` routes |
 
-With docker, compose also gets the stack's `compose.docker.yaml`, which
-gives the gateway `host.docker.internal` on Linux.
+Compose runs `.infrapi-dev/compose.yaml`, rendered with the rest. With
+docker, it also gets `.infrapi-dev/compose.docker.yaml`, which gives the
+gateway `host.docker.internal` on Linux. A `compose.override.yaml` beside
+`dev.yaml` comes last; its relative paths are from `.infrapi-dev/`,
+compose's project directory.
 
 ## dev init
 
@@ -108,8 +111,8 @@ renders `.infrapi-dev/` once, so the first `dev up` needs no `--force`.
 
 ```bash
 infrapi-cli dev up [--new-keys] [--force]
-# + podman compose --env-file .infrapi-dev/env -f compose.yaml ps -q
-# + podman compose --env-file .infrapi-dev/env -f compose.yaml up -d
+# + podman compose --env-file .infrapi-dev/env -f .infrapi-dev/compose.yaml ps -q
+# + podman compose --env-file .infrapi-dev/env -f .infrapi-dev/compose.yaml up -d
 ```
 
 It renders `.infrapi-dev/` (see [dev render](#dev-render)), builds
@@ -181,6 +184,9 @@ A new file is only named (`kayra.yaml: new file`). The diff never prints a signi
 | `keys/*.pem` | the signing keys, generated once and kept; `--new-keys` generates new ones, refusing every token minted before |
 | `routes/*.json`, `routes/removed` | the gateway's own routes, and the ids `dev.yaml` removes |
 | `example.env` | the example API's settings |
+| `compose.yaml`, `compose.docker.yaml` | the containers, compose's files |
+| `apisix/config.yaml`, `apisix/routes.sh` | APISIX's configuration (`gateway.config` merged in), and the script loading the routes |
+| `kayra/Dockerfile` | Kayra built from a checkout, for `kayra.src` |
 
 `dev.yaml` is checked
 first: an unknown key, a malformed name, a platform infrapi/lib does not

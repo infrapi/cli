@@ -41,6 +41,8 @@ type Config struct {
 	} `yaml:"kayra"`
 
 	Gateway struct {
+		// Config is merged into APISIX's config.yaml, as Kayra's config.
+		Config yaml.Node `yaml:"config"`
 		// Routes are merged into the gateway's own routes by id: a new id
 		// is a new route, null removes one.
 		Routes map[string]yaml.Node `yaml:"routes"`
@@ -187,6 +189,9 @@ func (c *Config) checkOverrides() error {
 	if n := &c.Kayra.Config; n.Kind != 0 && !isNull(n) && n.Kind != yaml.MappingNode {
 		return fmt.Errorf("kayra.config: a map, merged into kayra.yaml")
 	}
+	if n := &c.Gateway.Config; n.Kind != 0 && !isNull(n) && n.Kind != yaml.MappingNode {
+		return fmt.Errorf("gateway.config: a map, merged into APISIX's config.yaml")
+	}
 	for id, n := range c.Gateway.Routes {
 		if !routeID.MatchString(id) {
 			return fmt.Errorf("gateway.routes.%s: a route id is lower case letters, digits, - and _", id)
@@ -222,5 +227,6 @@ func (c *Config) Builtin(name string) string {
 	return name + "." + c.Domain
 }
 
-// AdminKey is APISIX's admin key in the dev stack's apisix/config.yaml.
+// AdminKey is APISIX's admin key in the stack's apisix/config.yaml: keep it
+// in gateway.config, infrapi-cli calls the Admin API with it.
 const AdminKey = "podman-admin-api-key"

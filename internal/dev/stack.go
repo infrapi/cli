@@ -70,7 +70,7 @@ type ExecFunc func(ctx context.Context, c Cmd, stdout, stderr io.Writer) (string
 type Stack struct {
 	Config     *Config
 	ConfigPath string
-	// Dir is the stack's directory: dev.yaml's, compose.yaml's.
+	// Dir is the stack's directory: dev.yaml's.
 	Dir string
 	// Out is where the stack's files are rendered: Dir/.infrapi-dev.
 	Out       string
@@ -202,10 +202,13 @@ func (s *Stack) output(ctx context.Context, c Cmd) (string, error) {
 // composeArgs is the compose command with the stack's env and files.
 func (s *Stack) composeArgs(args ...string) []string {
 	a := append([]string{}, s.compose...)
-	a = append(a, "--env-file", filepath.Join(".infrapi-dev", "env"), "-f", "compose.yaml")
+	out := filepath.Base(s.Out)
+	// compose's project directory is the first file's, .infrapi-dev: its
+	// paths, and compose.override.yaml's, are relative to it
+	a = append(a, "--env-file", filepath.Join(out, "env"), "-f", filepath.Join(out, "compose.yaml"))
 	if s.Engine == "docker" {
 		// docker on Linux has no host.docker.internal of its own
-		a = append(a, "-f", "compose.docker.yaml")
+		a = append(a, "-f", filepath.Join(out, "compose.docker.yaml"))
 	}
 	// yours: compose does not read it by itself once -f is given
 	if _, err := os.Stat(filepath.Join(s.Dir, composeOverride)); err == nil {
@@ -214,8 +217,10 @@ func (s *Stack) composeArgs(args ...string) []string {
 	return append(a, args...)
 }
 
-// composeOverride is the stack's own compose file, when it has one: what
-// compose.yaml does not cover, a service added say.
+// composeOverride is the stack's own compose file, beside dev.yaml, when
+// it has one: what the rendered compose.yaml does not cover, a service
+// added say. Its relative paths are .infrapi-dev's, compose's project
+// directory.
 const composeOverride = "compose.override.yaml"
 
 // composeEnv is compose's environment: podman compose, which runs an
@@ -256,7 +261,7 @@ func (s *Stack) Render(o RenderOptions) (Rendered, error) {
 		s.explain(r)
 		return r, ErrRenderCanceled
 	}
-	return r, s.readable()
+	return r, nil
 }
 
 // sources says where each rendered file comes from: what to change in
@@ -268,6 +273,11 @@ var sources = []struct{ prefix, from string }{
 	{"example.env", "domain, platform, region, location, ports.gateway, example; anything else: example.env"},
 	{"routes/", "domain, ports, example; a route changed, added or removed (null): gateway.routes.<id>. Your API's route: infrapi-cli dev api add"},
 	{"keys/", "kayra.keys.self, kayra.keys.local for keys of your own; --new-keys for new ones"},
+	{"apisix/config.yaml", "gateway.config"},
+	{"compose.yaml", "none: it is infrapi-cli's; a compose.override.yaml beside dev.yaml is read after it"},
+	{"compose.docker.yaml", "none: it is infrapi-cli's; a compose.override.yaml beside dev.yaml is read after it"},
+	{"apisix/routes.sh", "none: it is infrapi-cli's; mount a script of your own from compose.override.yaml"},
+	{"kayra/Dockerfile", "none: it is infrapi-cli's"},
 }
 
 // explain says why a render was canceled, and how to go on.
@@ -314,33 +324,6 @@ func (s *Stack) rendered() error {
 	return nil
 }
 
-// mounted are the stack's own files compose.yaml mounts into the
-// containers, besides the rendered ones.
-var mounted = []string{filepath.Join("apisix", "config.yaml"), filepath.Join("apisix", "routes.sh")}
-
-// readable makes the files the containers mount readable by them: they run
-// as another user than the files' owner (kayra as 10001, apisix as its
-// own), and dev init wrote them under the umask, 0600 with a umask of 077.
-func (s *Stack) readable() error {
-	for _, f := range mounted {
-		p := filepath.Join(s.Dir, f)
-		st, err := os.Stat(p)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			return err
-		}
-		mode := st.Mode().Perm() | 0o444 // read for all: compose.yaml mounts it read-only
-		if mode != st.Mode().Perm() {
-			if err := os.Chmod(p, mode); err != nil { //#nosec G302 -- the stack's own config and script, mounted into its containers
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 // Build builds localImage from kayra.src; it says so and does nothing
 // without one.
 func (s *Stack) Build(ctx context.Context) error {
@@ -355,7 +338,7 @@ func (s *Stack) Build(ctx context.Context) error {
 	if _, err := os.Stat(filepath.Join(src, "go.mod")); err != nil {
 		return fmt.Errorf("build: no Kayra checkout at %s (kayra.src in %s)", src, ConfigName)
 	}
-	args := append(append([]string{}, s.build...), "--build-context", "src="+src, "-t", localImage, "kayra")
+	args := append(append([]string{}, s.build...), "--build-context", "src="+src, "-t", localImage, filepath.Join(filepath.Base(s.Out), "kayra"))
 	return s.run(ctx, Cmd{Args: args})
 }
 
@@ -555,7 +538,7 @@ func (s *Stack) Check(ctx context.Context, dir string) error {
 		dir = filepath.Join(s.Dir, dir)
 	}
 	for _, c := range []Cmd{
-		{Args: []string{"sh", "-n", filepath.Join("apisix", "routes.sh")}},
+		{Args: []string{"sh", "-n", filepath.Join(filepath.Base(s.Out), "apisix", "routes.sh")}},
 		{Dir: dir, Args: []string{"go", "vet", "./..."}},
 		{Dir: dir, Args: []string{"go", "build", "-o", os.DevNull, "."}},
 	} {

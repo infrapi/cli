@@ -38,6 +38,9 @@ const keyIndent = "          "
 //	routes/*.json the gateway's own routes, loaded by apisix/routes.sh
 //	example.env   the example API's settings
 //	keys/*.pem    the signing keys, generated when missing or when NewKeys
+//	compose.yaml, compose.docker.yaml, apisix/config.yaml, apisix/routes.sh,
+//	kayra/Dockerfile: the stack itself, from templates/stack, gateway.config
+//	merged into apisix/config.yaml
 //
 // It writes nothing unless Force, or unless nothing changes: a render that
 // would create, change or remove a file is canceled, Rendered.Pending set
@@ -148,6 +151,9 @@ func plan(c *Config, dir string, newKeys bool) (*rendering, error) {
 		"users.yaml":  append([]byte("# The users of dev.yaml, rendered by infrapi-cli dev render: edit dev.yaml.\n"), users...),
 		"example.env": []byte(withEnv(exampleEnv(c), c.Example.Env, "example.env")),
 	}
+	if err := stackFiles(c, files); err != nil {
+		return nil, err
+	}
 	keep := map[string]bool{}
 	for i, r := range routes {
 		body, err := json.MarshalIndent(r.Body, "", "  ")
@@ -222,14 +228,16 @@ func (pl *rendering) apply(dir string) error {
 	if err := os.Chmod(dir, 0o700); err != nil { //#nosec G302 -- a directory: 0700 is its owner only
 		return err
 	}
-	routesDir := filepath.Join(dir, "routes")
-	// read by gateway-init as another user than its owner
-	if err := os.MkdirAll(routesDir, 0o755); err != nil { //#nosec G301 -- see above
-		return err
-	}
-	// MkdirAll and WriteFile apply the umask: 077 would leave 0700 and 0600
-	if err := os.Chmod(routesDir, 0o755); err != nil { //#nosec G302 -- see above
-		return err
+	// read by the containers as another user than their owner
+	for _, sub := range []string{"routes", "apisix", "kayra"} {
+		d := filepath.Join(dir, sub)
+		if err := os.MkdirAll(d, 0o755); err != nil { //#nosec G301 -- see above
+			return err
+		}
+		// MkdirAll and WriteFile apply the umask: 077 would leave 0700 and 0600
+		if err := os.Chmod(d, 0o755); err != nil { //#nosec G302 -- see above
+			return err
+		}
 	}
 	for rel, key := range pl.keys {
 		if err := os.WriteFile(filepath.Join(dir, rel), key, 0o600); err != nil {
@@ -313,6 +321,47 @@ func fingerprint(key []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])[:16]
 }
 
+// stackFiles adds the stack's own files to files, as templates/stack has
+// them, dev.yaml's gateway.config merged into apisix/config.yaml.
+func stackFiles(c *Config, files map[string][]byte) error {
+	return fs.WalkDir(templates, "templates/stack", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := templates.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel := filepath.FromSlash(strings.TrimPrefix(path, "templates/stack/"))
+		if rel == filepath.Join("apisix", "config.yaml") {
+			if data, err = mergeYAML(data, &c.Gateway.Config); err != nil {
+				return fmt.Errorf("apisix/config.yaml: %w", err)
+			}
+		}
+		files[rel] = data
+		return nil
+	})
+}
+
+// mergeYAML is the YAML document data, over merged into it as nodes: its
+// comments stay.
+func mergeYAML(data []byte, over *yaml.Node) ([]byte, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	if over.Kind == yaml.MappingNode {
+		mergeNode(doc.Content[0], over)
+	}
+	var out bytes.Buffer
+	enc := yaml.NewEncoder(&out)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), enc.Close()
+}
+
 // removedRoutes is the file, in routes/, of the ids of the routes dev.yaml
 // removes, one a line.
 const removedRoutes = "removed"
@@ -379,20 +428,11 @@ func renderKayra(c *Config, selfKey, localKey []byte) ([]byte, error) {
 	}
 	// dev.yaml's kayra.config, merged in as YAML nodes: the template's
 	// comments stay
-	var doc yaml.Node
-	if err := yaml.Unmarshal(out.Bytes(), &doc); err != nil {
+	merged, err := mergeYAML(out.Bytes(), &c.Kayra.Config)
+	if err != nil {
 		return nil, fmt.Errorf("kayra.yaml: %w", err)
 	}
-	if c.Kayra.Config.Kind == yaml.MappingNode {
-		mergeNode(doc.Content[0], &c.Kayra.Config)
-	}
-	var merged bytes.Buffer
-	enc := yaml.NewEncoder(&merged)
-	enc.SetIndent(2)
-	if err := enc.Encode(&doc); err != nil {
-		return nil, err
-	}
-	return merged.Bytes(), enc.Close()
+	return merged, nil
 }
 
 // envFile holds what compose.yaml and the Makefile take from dev.yaml:

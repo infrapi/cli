@@ -16,15 +16,6 @@ func TestRender_umask077(t *testing.T) {
 	defer syscall.Umask(old)
 
 	s, _ := testStack(t, "", StackOptions{})
-	for _, f := range mounted {
-		p := filepath.Join(s.Dir, f)
-		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
 	if _, err := s.Render(RenderOptions{Force: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -33,8 +24,10 @@ func TestRender_umask077(t *testing.T) {
 		filepath.Join(s.Out, "users.yaml"):              0o644,
 		filepath.Join(s.Out, "routes"):                  0o755,
 		filepath.Join(s.Out, "routes", "00-kayra.json"): 0o644,
-		filepath.Join(s.Dir, "apisix", "config.yaml"):   0o644,
-		filepath.Join(s.Dir, "apisix", "routes.sh"):     0o644,
+		filepath.Join(s.Out, "apisix", "config.yaml"):   0o644,
+		filepath.Join(s.Out, "apisix", "routes.sh"):     0o644,
+		filepath.Join(s.Out, "apisix"):                  0o755,
+		filepath.Join(s.Out, "compose.yaml"):            0o644,
 		filepath.Join(s.Out, "keys", "self.pem"):        0o600,
 		s.Out:                                           0o700,
 	} {

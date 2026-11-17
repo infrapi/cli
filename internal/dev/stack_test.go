@@ -101,7 +101,7 @@ func TestUp_recreatesOnlyOnChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	last := rec.lines()[len(rec.lines())-1]
-	if last != "podman compose --env-file .infrapi-dev/env -f compose.yaml up -d "+recreate {
+	if last != "podman compose --env-file .infrapi-dev/env -f .infrapi-dev/compose.yaml up -d "+recreate {
 		t.Fatalf("after a change: %s", last)
 	}
 	if rec.cmds[0].Dir != s.Dir {
@@ -116,7 +116,7 @@ func TestCompose_engines(t *testing.T) {
 	if err := s.Compose(context.Background(), "ps"); err != nil {
 		t.Fatal(err)
 	}
-	if got := rec.lines()[0]; got != "docker compose --env-file .infrapi-dev/env -f compose.yaml -f compose.docker.yaml ps" {
+	if got := rec.lines()[0]; got != "docker compose --env-file .infrapi-dev/env -f .infrapi-dev/compose.yaml -f .infrapi-dev/compose.docker.yaml ps" {
 		t.Errorf("docker: %s", got)
 	}
 	if s.HostAlias != "host.docker.internal" {
@@ -127,7 +127,7 @@ func TestCompose_engines(t *testing.T) {
 	if err := s.Compose(context.Background(), "down", "-v"); err != nil {
 		t.Fatal(err)
 	}
-	if got := rec.lines()[0]; got != "nerdctl compose --env-file .infrapi-dev/env -f compose.yaml down -v" {
+	if got := rec.lines()[0]; got != "nerdctl compose --env-file .infrapi-dev/env -f .infrapi-dev/compose.yaml down -v" {
 		t.Errorf("--compose: %s", got)
 	}
 	if s.HostAlias != "host.lima.internal" {

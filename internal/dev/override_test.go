@@ -309,7 +309,61 @@ func TestOverride_composeFile(t *testing.T) {
 	if err := s.Compose(context.Background(), "ps"); err != nil {
 		t.Fatal(err)
 	}
-	if got := rec.lines()[0]; got != "podman compose --env-file .infrapi-dev/env -f compose.yaml -f compose.override.yaml ps" {
+	if got := rec.lines()[0]; got != "podman compose --env-file .infrapi-dev/env -f .infrapi-dev/compose.yaml -f compose.override.yaml ps" {
 		t.Errorf("compose: %s", got)
+	}
+}
+
+// The stack's own files are rendered into .infrapi-dev/, compose.yaml's
+// paths relative to it; gateway.config is merged into APISIX's config.
+func TestRender_stackFiles(t *testing.T) {
+	c, err := LoadConfig(writeConfig(t, "gateway:\n  config:\n    apisix: {enable_ipv6: true}\n    plugin_attr: null\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if _, err := Render(c, dir, RenderOptions{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	compose := read(t, filepath.Join(dir, "compose.yaml"))
+	for _, want := range []string{"./kayra.yaml:/etc/kayra/kayra.yaml", "./routes:/routes", "./apisix/config.yaml:", "./apisix/routes.sh:"} {
+		if !strings.Contains(compose, want) {
+			t.Errorf("compose.yaml misses %q", want)
+		}
+	}
+	if strings.Contains(compose, "./.infrapi-dev/") {
+		t.Error("compose.yaml has a path from the stack's root")
+	}
+	for _, f := range []string{"compose.docker.yaml", "apisix/routes.sh", "kayra/Dockerfile"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
+			t.Error(err)
+		}
+	}
+	apisix := read(t, filepath.Join(dir, "apisix", "config.yaml"))
+	var a map[string]any
+	if err := yaml.Unmarshal([]byte(apisix), &a); err != nil {
+		t.Fatal(err)
+	}
+	if a["apisix"].(map[string]any)["enable_ipv6"] != true || a["apisix"].(map[string]any)["node_listen"] != 9080 {
+		t.Errorf("apisix: %v", a["apisix"])
+	}
+	if _, ok := a["plugin_attr"]; ok {
+		t.Error("plugin_attr: null left it")
+	}
+	if !strings.Contains(apisix, "key: "+AdminKey) || !strings.Contains(apisix, "# A development key") {
+		t.Error("config.yaml lost its admin key or its comments")
+	}
+
+	// edited by hand: the keep snippet is gateway.config
+	p := filepath.Join(dir, "apisix", "config.yaml")
+	if err := os.WriteFile(p, []byte(strings.Replace(apisix, "node_listen: 9080", "node_listen: 9090", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Render(c, dir, RenderOptions{})
+	if err != nil || !r.Pending {
+		t.Fatalf("%+v %v", r, err)
+	}
+	if got := keepYAML(r.Keep, ""); got != "gateway:\n  config:\n    apisix:\n      node_listen: 9090\n" {
+		t.Errorf("keep = %q", got)
 	}
 }
