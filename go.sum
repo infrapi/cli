@@ -57,8 +57,8 @@ github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkp
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/hexops/gotextdiff v1.0.3 h1:gitA9+qJrrTCsiCl7+kh75nPqQt1cx4ZkudSTLoUqJM=
 github.com/hexops/gotextdiff v1.0.3/go.mod h1:pSWU5MAI3yDq+fZBTazCSJysOMbxWL1BSow5/V2vxeg=
-github.com/infrapi/lib v0.16.0 h1:K9DVkxFTsKIQ/VzK5hgTrw8B3KFWhdsYF2Qzq0fbE48=
-github.com/infrapi/lib v0.16.0/go.mod h1:eBThs4Df4A1D74UK+Gu60L3ibC0ZQtK5vrVRp931NgQ=
+github.com/infrapi/lib v1.3.0 h1:ixqY1Rc93KYJSG8Ji302lNuHm8tEeOJOJPPCNbQxu5c=
+github.com/infrapi/lib v1.3.0/go.mod h1:hPiOv9QgZVd4x75wzQ82LiDjLTDWbMEa0YmfVWv2wRg=
 github.com/kr/pretty v0.2.1/go.mod h1:ipq/a2n7PKx3OHsz4KJII5eveXtPO4qwEXGdVfWzfnI=
 github.com/kr/pretty v0.3.1 h1:flRD4NNwYAUpkphVc1HcthR4KEIFJ65n8Mw5qdRn3LE=
 github.com/kr/pretty v0.3.1/go.mod h1:hoEshYVHaxMs3cyo3Yncou5ZscifuDolrwPKZanG3xk=
