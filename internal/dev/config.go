@@ -1,6 +1,6 @@
 // Package dev is infrapi-cli's dev stack: dev.yaml, the files rendered from
 // it, the stack's containers (Stack), an API's route through the gateway,
-// and the scaffolding of a new stack (Init).
+// and a new stack's dev.yaml (Init).
 package dev
 
 import (
@@ -58,12 +58,15 @@ type Config struct {
 	SysadminGroups []string `yaml:"sysadmin_groups"`
 	Users          []User   `yaml:"users"`
 
-	Example struct {
+	// App is the API developed against the stack, on the host: infrapi-cli
+	// app init writes it, dev api add routes it, app register registers it.
+	App struct {
+		// API is its group: <name>.<domain>, or a full DNS name.
 		API  string `yaml:"api"`
 		Port int    `yaml:"port"`
-		// Env is added to, or replaces in, the example API's settings.
+		// Env is added to, or replaces in, its settings, .infrapi-dev/app.env.
 		Env map[string]string `yaml:"env"`
-	} `yaml:"example"`
+	} `yaml:"app"`
 
 	// dir is dev.yaml's directory: kayra.keys are relative to it.
 	dir string
@@ -100,15 +103,24 @@ func LoadConfig(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	c, err := parseConfig(data, filepath.Dir(path))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return c, nil
+}
+
+// parseConfig is dev.yaml's content, dir its directory.
+func parseConfig(data []byte, dir string) (*Config, error) {
 	var c Config
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) { // empty: the defaults
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, err
 	}
-	c.dir = filepath.Dir(path)
+	c.dir = dir
 	if err := c.check(); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, err
 	}
 	return &c, nil
 }
@@ -136,7 +148,7 @@ func (c *Config) check() error {
 	defInt(&c.Ports.Prometheus, 9091)
 	defInt(&c.Ports.Control, 9092)
 	defInt(&c.Ports.Etcd, 2379)
-	defInt(&c.Example.Port, 8080)
+	defInt(&c.App.Port, 8080)
 	if len(c.SysadminGroups) == 0 {
 		c.SysadminGroups = []string{c.Platform + "-core-sysadmin"}
 	}
@@ -158,7 +170,7 @@ func (c *Config) check() error {
 	seen := map[int]string{}
 	for name, p := range map[string]int{
 		"kayra": c.Ports.Kayra, "gateway": c.Ports.Gateway, "gateway_tls": c.Ports.GatewayTLS, "admin": c.Ports.Admin,
-		"prometheus": c.Ports.Prometheus, "control": c.Ports.Control, "etcd": c.Ports.Etcd, "example.port": c.Example.Port,
+		"prometheus": c.Ports.Prometheus, "control": c.Ports.Control, "etcd": c.Ports.Etcd, "app.port": c.App.Port,
 	} {
 		if p < 1 || p > 65535 {
 			return fmt.Errorf("ports.%s: %d is not a port", name, p)
@@ -177,9 +189,9 @@ func (c *Config) check() error {
 		users[u.ID] = true
 	}
 
-	def(&c.Example.API, "compute")
-	if !dnsName.MatchString(c.FullAPI(c.Example.API)) {
-		return fmt.Errorf("example.api: %q: a lower case DNS label, or a full DNS name", c.Example.API)
+	def(&c.App.API, "compute")
+	if !dnsName.MatchString(c.FullAPI(c.App.API)) {
+		return fmt.Errorf("app.api: %q: a lower case DNS label, or a full DNS name", c.App.API)
 	}
 	return c.checkOverrides()
 }
@@ -200,7 +212,7 @@ func (c *Config) checkOverrides() error {
 			return fmt.Errorf("gateway.routes.%s: a route, as APISIX's Admin API takes it, or null to remove it", id)
 		}
 	}
-	for key, env := range map[string]map[string]string{"compose.env": c.Compose.Env, "example.env": c.Example.Env} {
+	for key, env := range map[string]map[string]string{"compose.env": c.Compose.Env, "app.env": c.App.Env} {
 		for k, v := range env {
 			if !envName.MatchString(k) {
 				return fmt.Errorf("%s.%s: an environment variable name", key, k)

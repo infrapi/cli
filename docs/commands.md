@@ -1,13 +1,13 @@
 ---
 title: Commands
-description: Reference for infrapi-cli's commands against a Kayra server - login, context, auth, apis, and the get, create, update, patch and delete verbs.
+description: Reference for infrapi-cli's commands against a Kayra server - login, auth (context, can-i, whoami), apis, and the get, create, update, patch and delete verbs.
 weight: 30
 ---
 
 # Commands
 
 Every command here talks to a Kayra server's own API, through a saved
-context (`login`, `context set`). The dev stack's commands are in
+context (`login`, `auth context set`). The dev stack's commands are in
 [dev](dev.md).
 
 ## Colors
@@ -46,8 +46,8 @@ export http_proxy=$https_proxy
 export no_proxy=.example.com,10.0.0.0/8
 ```
 
-Every call goes through it: Kayra's API, `login`, and `dev init`'s clone
-of the [infrapi/dev](https://github.com/infrapi/dev) template.
+Every call goes through it: Kayra's API, `login`, `app register`. `go mod
+tidy`, after `app init`, reads them too.
 `localhost` and loopback addresses are always reached directly, so the
 dev stack's own calls (Kayra, the gateway, APISIX's Admin API) never go
 through it.
@@ -86,11 +86,11 @@ infrapi-cli login --server https://kayra.example.com
 #   https://kayra.example.com/oauth2/v1/authorize?...
 #
 # infrapi-cli: logged in — saved context "kayra.infrapi.io" to ~/.config/infrapi/config (now current)
-# infrapi-cli: run `infrapi-cli context token` to print the bearer token
+# infrapi-cli: run `infrapi-cli auth context token` to print the bearer token
 ```
 
 The token itself is never printed — it's already in the context file this
-just wrote; read it back with [`context token`](#context) whenever you
+just wrote; read it back with [`auth context token`](#context) whenever you
 actually need it.
 
 `--server`'s own `/oauth2/v1/authorize` resolves which
@@ -146,9 +146,15 @@ provider's app registration: it still only ever sees Kayra's own
 
 See [oauth2login](packages.md#oauth2login) for how the flow itself works.
 
-### context
+### auth (context, can-i, whoami)
 
-Manages `~/.config/infrapi/config` — the file `login` writes to on every
+Everything about the login itself: the saved logins (`auth context`, or
+`auth ctx`), and what a server says of the current one (`auth can-i`,
+`auth whoami`).
+
+#### context
+
+`infrapi-cli auth context`, or `auth ctx`, manages `~/.config/infrapi/config` — the file `login` writes to on every
 successful login ([internal/clicontext](packages.md#clicontext)). Its
 shape mirrors `kubectl`'s own `~/.kube/config`: a map of named contexts
 (server, token, expiry) plus a `current_context`, so switching back to an
@@ -159,19 +165,19 @@ earlier login never requires authenticating again. Override the path with
 infrapi-cli login --server https://kayra.internal
 infrapi-cli login --server https://kayra-staging.internal --context-name staging
 
-infrapi-cli context list
+infrapi-cli auth context list
 # CURRENT  NAME                       SERVER                            EXPIRY
 #          kayra.internal           https://kayra.internal          2026-11-03T16:04:05+01:00
 # *        staging                    https://kayra-staging.internal  2026-11-03T17:04:05+01:00
 
 # save an existing token (e.g. a `kayra token mint` bootstrap token) without logging in
-infrapi-cli context set bootstrap --server http://localhost:8080 --token "$TOKEN"
+infrapi-cli auth context set bootstrap --server http://localhost:8080 --token "$TOKEN"
 
-infrapi-cli context use kayra.internal  # switch back without logging in again
-infrapi-cli context current               # show the active context's details
-infrapi-cli context token                 # print the active context's bearer token
-infrapi-cli context token staging         # print a specific context's token
-infrapi-cli context delete staging        # drop a saved login
+infrapi-cli auth context use kayra.internal  # switch back without logging in again
+infrapi-cli auth context current               # show the active context's details
+infrapi-cli auth context token                 # print the active context's bearer token
+infrapi-cli auth context token staging         # print a specific context's token
+infrapi-cli auth context delete staging        # drop a saved login
 ```
 
 | Subcommand | Args | Meaning |
@@ -183,7 +189,7 @@ infrapi-cli context delete staging        # drop a saved login
 | `delete` | `<name>` | remove a saved context |
 | `token` | `[name]` | print a context's bearer token (defaults to current) |
 
-#### One call in another context
+##### One call in another context
 
 `--context <name>` runs one command in a saved context, without changing
 the current one, like `kubectl --context`. Every command takes it, before
@@ -193,18 +199,18 @@ or after itself, and `$INFRAPI_CONTEXT` does the same for a whole shell:
 infrapi-cli auth whoami --context staging          # staging, this once
 infrapi-cli --context staging get catalog apiregistrations
 INFRAPI_CONTEXT=staging infrapi-cli apis           # or export it for a session
-infrapi-cli context current                        # still the one you had
+infrapi-cli auth context current                        # still the one you had
 ```
 
 An unknown name is refused, and nothing is called.
 
-### auth (can-i, whoami)
+#### can-i and whoami
 
 Two checks that ask a server about the current login itself, rather
 than managing it. Like every command, they take
 [`--context`](#one-call-in-another-context).
 
-#### can-i
+##### can-i
 
 Mirrors `kubectl auth can-i`: asks the server's own
 [check endpoint](https://infrapi.github.io/kayra/architecture/rbac-and-auth/#authorizing-other-apps-requests),
@@ -253,7 +259,7 @@ command nor the server exposes that comparison any other way.
 | `--api` | — | required; the API group being asked about, by its full name (`compute.infrapi.io`) or short name (`compute`, resolved through `GET /apis`) — never Kayra's own `authorization.<domain>` |
 | `--namespace` | — | required; the namespace to check against |
 
-#### whoami
+##### whoami
 
 Prints exactly what the server's own `GET /oauth2/userinfo` returns
 for the current login — `sub`, `provider`, `authorization`, `groups`,
@@ -330,7 +336,7 @@ per-namespace groups/roles/rolebindings) and cluster-scoped
 (`catalog`'s `apiregistrations`, `authorization`'s
 `clustergroups`/`clusterroles`/`clusterrolebindings`):
 
-Responses print as a table like `context list`'s: `NAMESPACE` (only with
+Responses print as a table like `auth context list`'s: `NAMESPACE` (only with
 `-n`), `NAME` (the resource's `name`, or `api` for a subscription),
 `CREATED AT` and `UPDATED AT`, in local time. `-o json` or `-o yaml` prints
 the full response instead (YAML keeps the server's field order). A response that isn't a named resource (a status
@@ -342,7 +348,7 @@ on stderr as `Error: <title> (<status>): <detail>`, followed by
 Each example's `curl` block is the exact request the verb sends, against
 `http://localhost:8080` with `app.api_domain` left at `infrapi.io` —
 take the token from the current context with
-`TOKEN=$(infrapi-cli context token)`.
+`TOKEN=$(infrapi-cli auth context token)`.
 
 **infrapi-cli**
 

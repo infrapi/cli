@@ -2,9 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/infrapi/cli/internal/ui"
@@ -14,7 +15,7 @@ import (
 	"github.com/infrapi/cli/internal/dev"
 )
 
-// devCommand is the local dev stack: scaffold one (init), then run it. Every
+// devCommand is the local dev stack: create one (init), then run it. Every
 // subcommand but init works on the stack whose dev.yaml is in the working
 // directory or above, or the one --config names.
 func devCommand() *cli.Command {
@@ -31,15 +32,15 @@ func devCommand() *cli.Command {
 		},
 		Commands: []*cli.Command{
 			{
-				Name:      "init",
-				Usage:     "scaffold a new dev stack from the infrapi/dev template, asking for its domain, platform, region and Kayra image",
-				ArgsUsage: "[name]",
+				Name:  "init",
+				Usage: "create the dev stack beside dev.yaml, in .infrapi-dev/: write dev.yaml first when there is none, asking for its domain, platform, region and Kayra image",
 				Flags: []cli.Flag{
-					&cli.StringFlag{Name: "template", Value: dev.DefaultTemplate, Usage: "the scaffold: a git URL (…@v1.2.0 for a tag, …#subdir for a directory) or a local path"},
-					&cli.StringFlag{Name: "dir", Value: ".", Usage: "where the stack's directory is created"},
-					&cli.StringSliceFlag{Name: "set", Usage: "answer a question: --set domain=example.org (repeatable)"},
-					&cli.BoolFlag{Name: "no-prompt", Usage: "ask nothing: every question not --set takes its default, and [name] is required"},
-					&cli.BoolFlag{Name: "force", Usage: "overwrite files the stack's directory has already"},
+					&cli.StringFlag{Name: "domain", Usage: "Kayra's API domain (default: infrapi.io)"},
+					&cli.StringFlag{Name: "platform", Usage: "sandbox, preprod or prod (default: sandbox)"},
+					&cli.StringFlag{Name: "region", Usage: "the region (default: eu-west-1)"},
+					&cli.StringFlag{Name: "image", Usage: "Kayra's image (default: ghcr.io/infrapi/kayra:latest)"},
+					&cli.BoolFlag{Name: "no-prompt", Usage: "ask nothing: what no flag gives takes its default"},
+					forceFlag(),
 				},
 				Action: runDevInit,
 			},
@@ -110,7 +111,7 @@ func devCommand() *cli.Command {
 				Commands: []*cli.Command{
 					{
 						Name:      "add",
-						Usage:     "route /apis/<api>/* to an upstream: dev.yaml's example API on the host by default",
+						Usage:     "route /apis/<api>/* to an upstream: dev.yaml's app, on the host, by default",
 						ArgsUsage: "[api [upstream]]",
 						Action:    withStack(runDevAPI(true)),
 					},
@@ -123,23 +124,9 @@ func devCommand() *cli.Command {
 				},
 			},
 			{
-				Name:  "example",
-				Usage: "run the example API on the host, with its rendered settings",
-				Flags: []cli.Flag{
-					&cli.StringFlag{Name: "dir", Value: "examples/compute", Usage: "the example, in the stack"},
-					&cli.StringFlag{Name: "lib-src", Usage: "a lib checkout to run it against, instead of the version its go.mod pins"},
-				},
-				Action: withStack(func(ctx context.Context, cmd *cli.Command, s *dev.Stack) error {
-					return s.Example(ctx, cmd.String("dir"), cmd.String("lib-src"))
-				}),
-			},
-			{
-				Name:  "check",
-				Usage: "lint the stack's script, vet and build the example",
-				Flags: []cli.Flag{&cli.StringFlag{Name: "dir", Value: "examples/compute", Usage: "the example, in the stack"}},
-				Action: withStack(func(ctx context.Context, cmd *cli.Command, s *dev.Stack) error {
-					return s.Check(ctx, cmd.String("dir"))
-				}),
+				Name:   "check",
+				Usage:  "lint the stack's script",
+				Action: withStack(func(ctx context.Context, cmd *cli.Command, s *dev.Stack) error { return s.Check(ctx) }),
 			},
 		},
 	}
@@ -189,40 +176,51 @@ func composeServicesCommand(name, usage string, args ...string) *cli.Command {
 }
 
 func runDevInit(_ context.Context, cmd *cli.Command) error {
-	vars := map[string]any{}
-	for _, kv := range cmd.StringSlice("set") {
-		k, v, ok := strings.Cut(kv, "=")
-		if !ok || k == "" {
-			return fmt.Errorf("dev init: --set %q: want key=value", kv)
-		}
-		vars[k] = v
-	}
-	dir, err := dev.Init(dev.InitOptions{
-		Template: cmd.String("template"),
-		Name:     cmd.Args().First(),
-		Dir:      cmd.String("dir"),
-		Vars:     vars,
-		NoPrompt: cmd.Bool("no-prompt"),
-		Force:    cmd.Bool("force"),
-	}, os.Stdout)
-	if err != nil {
-		return err
-	}
-	// a new stack: nothing to overwrite yet, so dev up has nothing to ask
-	s, err := dev.OpenStack(dev.StackOptions{Config: filepath.Join(dir, dev.ConfigName)})
-	if err != nil {
-		return err
-	}
-	if _, err := s.Render(dev.RenderOptions{Force: true}); err != nil {
-		return err
-	}
 	out := ui.Stdout()
-	_, _ = fmt.Fprintf(out, "\n  %s is %s\n\n", ui.Name(dir), ui.OK("ready:"))
-	for _, c := range []string{"cd " + dir, "infrapi-cli dev doctor", "infrapi-cli dev up", "infrapi-cli dev contexts"} {
+	path := cmd.String("config")
+	if path == "" {
+		path = dev.ConfigName
+	}
+	switch _, err := os.Stat(path); {
+	case errors.Is(err, fs.ErrNotExist):
+		a := dev.Answers{Domain: cmd.String("domain"), Platform: cmd.String("platform"), Region: cmd.String("region"), Image: cmd.String("image")}
+		if !cmd.Bool("no-prompt") && interactive() {
+			if err := dev.Ask(&a); err != nil {
+				return err
+			}
+		}
+		if err := dev.WriteConfig(path, a); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(out, "%s %s\n", ui.Name(path), ui.OK("written"))
+	case err != nil:
+		return err
+	default:
+		_, _ = fmt.Fprintf(out, "%s: the stack's settings\n", ui.Name(path))
+	}
+
+	s, err := dev.OpenStack(dev.StackOptions{Config: path})
+	if err != nil {
+		return err
+	}
+	// a new stack: nothing to overwrite yet, so it asks nothing
+	_, err = os.Stat(s.Out)
+	fresh := errors.Is(err, fs.ErrNotExist)
+	if _, err := s.Render(dev.RenderOptions{Force: fresh || cmd.Bool("force")}); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(out, "\n  %s is %s Edit %s, then %s applies it.\n\n", ui.Name(s.Out), ui.OK("ready."), ui.Name(dev.ConfigName), ui.Cmd("dev up --force"))
+	for _, c := range []string{"infrapi-cli dev doctor", "infrapi-cli dev up", "infrapi-cli dev health", "infrapi-cli dev contexts"} {
 		_, _ = fmt.Fprintf(out, "    %s\n", ui.Cmd(c))
 	}
 	_, _ = fmt.Fprintln(out)
 	return nil
+}
+
+// interactive is whether stdin is a terminal, to ask questions on.
+func interactive() bool {
+	fi, err := os.Stdin.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
 func runDevDoctor(ctx context.Context, _ *cli.Command, s *dev.Stack) error {
@@ -277,15 +275,15 @@ func runDevContexts(ctx context.Context, _ *cli.Command, s *dev.Stack) error {
 	}
 	_, _ = fmt.Fprintf(out, "contexts: %s %s, on %s; %s is the current one\n", strings.Join(styled, ", "), ui.OK("saved"),
 		ui.URL(fmt.Sprintf("http://localhost:%d", s.Config.Ports.Gateway)), ui.Name("dev-admin"))
-	_, _ = fmt.Fprintf(out, "  %s %s, then create an API: %s\n", ui.Bold("next:"), ui.Cmd("infrapi-cli auth whoami"),
-		ui.URL("https://infrapi.github.io/products/dev/docs/create-an-api/"))
+	_, _ = fmt.Fprintf(out, "  %s %s, then develop an API: %s\n", ui.Bold("next:"), ui.Cmd("infrapi-cli app add <resource>"),
+		ui.URL("https://infrapi.github.io/products/cli/docs/develop/develop-an-api/"))
 	return nil
 }
 
 func runDevAPI(add bool) func(context.Context, *cli.Command, *dev.Stack) error {
 	return func(ctx context.Context, cmd *cli.Command, s *dev.Stack) error {
 		c := s.Config
-		api, upstream := c.FullAPI(c.Example.API), fmt.Sprintf("%s:%d", s.HostAlias, c.Example.Port)
+		api, upstream := c.FullAPI(c.App.API), fmt.Sprintf("%s:%d", s.HostAlias, c.App.Port)
 		if cmd.Args().Len() > 0 {
 			api = c.FullAPI(cmd.Args().Get(0))
 		}

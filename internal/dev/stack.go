@@ -271,9 +271,9 @@ func (s *Stack) Render(o RenderOptions) (Rendered, error) {
 var sources = []struct{ prefix, from string }{
 	{"kayra.yaml", "domain, platform, region, location, sysadmin_groups, ports.kayra, users; anything else: kayra.config"},
 	{"users.yaml", "users"},
-	{"env", "domain, platform, kayra.image or kayra.src, ports, example; anything else: compose.env"},
-	{"example.env", "domain, platform, region, location, ports.gateway, example; anything else: example.env"},
-	{"routes/", "domain, ports, example; a route changed, added or removed (null): gateway.routes.<id>. Your API's route: infrapi-cli dev api add"},
+	{"env", "domain, platform, kayra.image or kayra.src, ports; anything else: compose.env"},
+	{"app.env", "domain, platform, region, location, ports.gateway, app; anything else: app.env"},
+	{"routes/", "domain, ports; a route changed, added or removed (null): gateway.routes.<id>. Your API's route: infrapi-cli dev api add"},
 	{"keys/", "kayra.keys.self, kayra.keys.local for keys of your own; --new-keys for new ones"},
 	{"apisix/config.yaml", "gateway.config"},
 	{"compose.yaml", "none: it is infrapi-cli's; a compose.override.yaml beside dev.yaml is read after it"},
@@ -514,48 +514,9 @@ func (s *Stack) Gateway() *Gateway {
 	return &Gateway{URL: fmt.Sprintf("http://localhost:%d", s.Config.Ports.Admin), Key: AdminKey, HTTP: s.http}
 }
 
-// Example runs the example API on the host, with its rendered settings,
-// against libSrc, a lib checkout, when set.
-func (s *Stack) Example(ctx context.Context, dir, libSrc string) error {
-	if err := s.rendered(); err != nil {
-		return err
-	}
-	if !filepath.IsAbs(dir) {
-		dir = filepath.Join(s.Dir, dir)
-	}
-	env := []string{"INFRAPI_CONFIG_DOTENV_FILE=" + filepath.Join(s.Out, "example.env")}
-	if libSrc != "" {
-		lib, err := filepath.Abs(libSrc)
-		if err != nil {
-			return err
-		}
-		work := filepath.Join(s.Out, "go.work")
-		if err := os.Remove(work); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		if err := s.run(ctx, Cmd{Dir: s.Out, Args: []string{"go", "work", "init", dir, lib}}); err != nil {
-			return err
-		}
-		env = append(env, "GOWORK="+work)
-	}
-	return s.run(ctx, Cmd{Dir: dir, Env: env, Args: []string{"go", "run", "."}})
-}
-
-// Check lints the stack's script and builds the example.
-func (s *Stack) Check(ctx context.Context, dir string) error {
-	if !filepath.IsAbs(dir) {
-		dir = filepath.Join(s.Dir, dir)
-	}
-	for _, c := range []Cmd{
-		{Args: []string{"sh", "-n", filepath.Join(filepath.Base(s.Out), "apisix", "routes.sh")}},
-		{Dir: dir, Args: []string{"go", "vet", "./..."}},
-		{Dir: dir, Args: []string{"go", "build", "-o", os.DevNull, "."}},
-	} {
-		if err := s.run(ctx, c); err != nil {
-			return err
-		}
-	}
-	return nil
+// Check lints the stack's script.
+func (s *Stack) Check(ctx context.Context) error {
+	return s.run(ctx, Cmd{Args: []string{"sh", "-n", filepath.Join(filepath.Base(s.Out), "apisix", "routes.sh")}})
 }
 
 // Check is one line of Doctor.
@@ -568,7 +529,7 @@ type Check struct {
 }
 
 // Doctor checks the prerequisites: the engine, its compose, and go for the
-// example API.
+// API.
 func (s *Stack) Doctor(ctx context.Context) []Check {
 	version := func(args ...string) (string, bool) {
 		if _, err := exec.LookPath(args[0]); err != nil {
@@ -595,7 +556,7 @@ func (s *Stack) Doctor(ctx context.Context) []Check {
 	if v, ok := version("go", "version"); ok {
 		checks = append(checks, Check{Name: "go", OK: true, Optional: true, Detail: v})
 	} else {
-		checks = append(checks, Check{Name: "go", Optional: true, Detail: "only for dev example and dev check: https://go.dev/dl/"})
+		checks = append(checks, Check{Name: "go", Optional: true, Detail: "to build and run your API: https://go.dev/dl/"})
 	}
 	// infrapi-cli, go, podman's pulls and the image build take it; docker's
 	// pulls take the daemon's own

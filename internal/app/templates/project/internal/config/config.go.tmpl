@@ -1,0 +1,50 @@
+// Package config is [[ .Name ]]'s settings, read from the dotenv file
+// INFRAPI_CONFIG_DOTENV_FILE names (.env when unset): infrapi/lib's own
+// INFRAPI_APP_* keys, and [[ .Name ]]'s, [[ .EnvPrefix ]]_*. infrapi-cli dev renders
+// one for the dev stack, .infrapi-dev/app.env: make run reads it.
+package config
+
+import (
+	libconfig "github.com/infrapi/lib/pkg/config"
+)
+
+// Config is [[ .Name ]]'s settings.
+type Config struct {
+	// App is infrapi/lib's: the name, platform, listen address, logs,
+	// CORS... (INFRAPI_APP_*).
+	App *libconfig.AppConfig
+	// AuthURL is Kayra's URL, through the gateway: [[ .EnvPrefix ]]_AUTH_URL.
+	AuthURL string
+}
+
+// Load reads the settings, and fails on a missing or invalid one.
+func Load() (*Config, error) {
+	vars, err := libconfig.NewConfig()
+	if err != nil {
+		return nil, err
+	}
+	app, err := vars.GetAppConfig()
+	if err != nil {
+		return nil, err
+	}
+	authURL, err := vars.GetString(&libconfig.VariableOpts{Key: "[[ .EnvPrefix ]]_AUTH_URL", Validator: "url"})
+	if err != nil {
+		return nil, err
+	}
+
+	// Your own settings are read the same way, a field of Config each:
+	//
+	//	region, err := vars.GetString(&libconfig.VariableOpts{
+	//		Key: "[[ .EnvPrefix ]]_AWS_REGION", Default: "eu-west-1"})
+	//	timeout, err := vars.GetDuration(&libconfig.VariableOpts{
+	//		Key: "[[ .EnvPrefix ]]_TIMEOUT", Default: "30s"})
+	//	token, err := vars.GetString(&libconfig.VariableOpts{
+	//		Key: "[[ .EnvPrefix ]]_TOKEN", Sensible: true}) // never in an error or a log
+	//	debug, err := vars.GetBool(&libconfig.VariableOpts{
+	//		Key: "[[ .EnvPrefix ]]_DEBUG", Default: "false"})
+	//
+	// Validator takes a go-playground/validator rule (url, hostname, oneof=a b...).
+	// Add them to dev.yaml's app.env to have them in .infrapi-dev/app.env.
+
+	return &Config{App: app, AuthURL: authURL}, nil
+}

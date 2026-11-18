@@ -1,0 +1,33 @@
+[[- if eq .CI "github" -]]
+# [[ .Name ]]'s CI, infrapi/ci's Go workflow: on a push or a pull request,
+# lint, test and build; on a tag v<x.y.z>, the release (GoReleaser:
+# .goreleaser.yaml). Its inputs: https://github.com/infrapi/ci
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  go:
+    uses: infrapi/ci/.github/workflows/go.yml@[[ .CIRef ]]
+    permissions:
+      contents: write   # the release
+      packages: write   # the image, on ghcr.io
+    with:
+      binary: [[ .Name ]]
+[[- if .GoPrivate ]]
+      goprivate: "[[ .GoPrivate ]]"
+[[- end ]]
+[[- if .Docker ]]
+      docker: true
+[[- if ne .Registry "ghcr.io" ]]
+      registry: [[ .Registry ]]
+[[- end ]]
+[[- end ]]
+    # GOPRIVATE_TOKEN: to fetch the private modules; REGISTRY_USERNAME and
+    # REGISTRY_PASSWORD: a registry other than ghcr.io
+    secrets: inherit
+[[ end -]]

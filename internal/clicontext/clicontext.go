@@ -2,7 +2,7 @@
 // Kayra server a token was fetched for, and the token itself — to
 // ~/.config/infrapi/config, in the same current-context/contexts
 // shape kubeconfig uses. `infrapi-cli login` always upserts the
-// context it just produced and switches to it; `infrapi-cli context
+// context it just produced and switches to it; `infrapi-cli auth context
 // use <name>` switches back to an earlier one without logging in
 // again.
 package clicontext
@@ -156,7 +156,7 @@ func (f *File) Delete(name string) error {
 // silently returning the zero value.
 func (f *File) Current() (string, Context, error) {
 	if f.CurrentContext == "" {
-		return "", Context{}, errors.New("clicontext: no current context — run `infrapi-cli login` or `infrapi-cli context use <name>`")
+		return "", Context{}, errors.New("clicontext: no current context — run `infrapi-cli login` or `infrapi-cli auth context use <name>`")
 	}
 	ctx, ok := f.Contexts[f.CurrentContext]
 	if !ok {

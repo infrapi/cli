@@ -19,7 +19,7 @@ import (
 //
 //	kayra.yaml     kayra.config
 //	routes/*.json  gateway.routes.<id>, a new id a new route, null removing one
-//	example.env    example.env
+//	app.env        app.env
 //	env            compose.env
 //	keys/*.pem     kayra.keys.self, kayra.keys.local: a key file of your own
 //	apisix/config.yaml  gateway.config
@@ -258,10 +258,10 @@ func keep(was, now map[string][]byte) map[string]any {
 				}
 				put(v, append(append([]string{}, key...), strings.Split(path, "\x00")...)...)
 			}
-		case name == "env" || name == "example.env":
+		case name == "env" || name == "app.env":
 			key := []string{"compose", "env"}
-			if name == "example.env" {
-				key = []string{"example", "env"}
+			if name == "app.env" {
+				key = []string{"app", "env"}
 			}
 			o, n := parseEnv(string(old)), parseEnv(string(cur))
 			for k, v := range o {

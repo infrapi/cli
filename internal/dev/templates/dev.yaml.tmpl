@@ -1,0 +1,96 @@
+# The InfraPI dev stack's settings, read by infrapi-cli dev: a local Kayra,
+# etcd and APISIX on podman or docker, to develop [[ .AppName ]] against.
+#
+# Every file the stack runs with is rendered from this one into
+# .infrapi-dev/: Kayra's configuration and users, the gateway's routes, the
+# ports, the API's settings. Edit this file, then infrapi-cli dev render
+# shows the diff and infrapi-cli dev up --force applies it. Don't edit
+# .infrapi-dev/: dev up stops on any change there.
+#
+# Anything a rendered file has can be overridden here: kayra.config,
+# kayra.keys, gateway.config, gateway.routes, app.env, compose.env. A map is
+# merged key by key, a list or a value replaced, null removes the key.
+# See https://infrapi.github.io/products/cli/docs/develop/dev-stack/.
+
+# Kayra's app.api_domain. Its own groups are system.<domain>,
+# catalog.<domain> and authorization.<domain>.
+domain: [[ .Domain ]]
+platform: [[ .Platform ]]    # sandbox, preprod or prod
+region: [[ .Region ]]
+location: dc1
+
+kayra:
+  # The image Kayra and its reconciler run, as released by infrapi/kayra.
+  image: [[ .Image ]]
+  # Or build it from a checkout instead (infrapi-cli dev build): set src, and
+  # image is ignored.
+  # src: ../kayra
+  # Merged into .infrapi-dev/kayra.yaml, Kayra's configuration.
+  # config:
+  #   reconciler:
+  #     max_concurrent_reconciles: 50
+  # Signing keys of your own (PEM), relative to this file, instead of the
+  # generated ones.
+  # keys:
+  #   self: keys/self.pem
+  #   local: keys/local.pem
+
+# APISIX's configuration, .infrapi-dev/apisix/config.yaml, merged with
+# config (keep its admin key); and its own routes (kayra, openapi-stub,
+# hooks, healthz, httpbin), merged by id, as APISIX's Admin API takes a
+# route: a new id is a new route, null removes one. Your API's route:
+# infrapi-cli app register, or infrapi-cli dev api add.
+# gateway:
+#   config:
+#     apisix: {enable_ipv6: true}
+#   routes:
+#     hooks:
+#       plugins: {mocking: {response_example: '{"status":"failed"}'}}
+#     httpbin: null
+
+# Added to, or replacing in, .infrapi-dev/env, the variables compose reads.
+# A compose.override.yaml beside this file is read after
+# .infrapi-dev/compose.yaml, its paths relative to .infrapi-dev/.
+# compose:
+#   env:
+#     MY_VAR: value
+
+# Where the stack listens, on 127.0.0.1.
+ports:
+  kayra: 8081        # Kayra, directly
+  gateway: 9080      # APISIX: Kayra and your APIs
+  gateway_tls: 9443
+  admin: 9180        # APISIX Admin API, and its UI at /ui
+  prometheus: 9091   # APISIX
+  control: 9092      # APISIX
+  etcd: 2379
+
+# The groups Kayra's cluster endpoints require (namespaces, API
+# registrations, cluster RBAC). infrapi-cli dev contexts mints dev-admin
+# with the first.
+sysadmin_groups:
+  - [[ .Platform ]]-core-sysadmin
+
+# The users of Kayra's "local" provider, a stand-in for LDAP: a token
+# minted for one (infrapi-cli dev token --subject <id>) gets its groups
+# from here.
+users:
+  - id: admin
+    attributes: {email: admin@example.com, name: Dev Admin}
+    groups: ["[[ .Platform ]]-core-sysadmin"]
+  - id: jdoe
+    attributes: {email: jdoe@example.com, name: John Doe}
+    groups: ["[[ .Platform ]]-thetenant-admins"]
+  - id: nobody
+    attributes: {email: nobody@example.com, name: No Body}
+    groups: []
+
+# The API you develop, run on the host (make run): its settings are
+# rendered into .infrapi-dev/app.env, and infrapi-cli app register routes
+# the gateway to it and registers it in Kayra.
+app:
+  api: [[ .API ]]    # its group, as in its contract's paths
+  port: [[ .Port ]]           # on the host, where the gateway reaches it
+  # Added to, or replacing in, .infrapi-dev/app.env, its settings.
+  # env:
+  #   INFRAPI_APP_LOG_LEVEL: debug

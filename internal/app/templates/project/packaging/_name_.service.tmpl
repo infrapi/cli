@@ -1,0 +1,18 @@
+[[- if or .Deb .RPM -]]
+[Unit]
+Description=The [[ .Name ]] API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Environment=INFRAPI_CONFIG_DOTENV_FILE=/etc/[[ .Name ]]/[[ .Name ]].env
+ExecStart=/usr/bin/[[ .Name ]]
+DynamicUser=yes
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target
+[[ end -]]

@@ -1,2 +1,0 @@
-domain: {{ .Scaffold.domain }}
-platform: {{ .Scaffold.platform }}

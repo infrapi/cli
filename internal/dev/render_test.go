@@ -39,16 +39,15 @@ func TestRender_domain(t *testing.T) {
 	}
 	env := read(t, filepath.Join(dir, "env"))
 	for _, want := range []string{"DEV_DOMAIN=example.org\n", "KAYRA_HEALTHZ=/apis/system.example.org/v1/-/healthz\n",
-		"GATEWAY_PORT=19080\n", "KAYRA_IMAGE=ghcr.io/infrapi/kayra:latest\n", "KAYRA_PULL_POLICY=missing\n",
-		"EXAMPLE_API=compute.example.org\n"} {
+		"GATEWAY_PORT=19080\n", "KAYRA_IMAGE=ghcr.io/infrapi/kayra:latest\n", "KAYRA_PULL_POLICY=missing\n"} {
 		if !strings.Contains(env, want) {
 			t.Errorf("env misses %q:\n%s", want, env)
 		}
 	}
-	example := read(t, filepath.Join(dir, "example.env"))
-	for _, want := range []string{`COMPUTE_API_GROUP="compute.example.org"`, `COMPUTE_AUTH_URL="http://localhost:19080"`} {
+	example := read(t, filepath.Join(dir, "app.env"))
+	for _, want := range []string{`INFRAPI_APP_NAME="compute"`, `COMPUTE_AUTH_URL="http://localhost:19080"`} {
 		if !strings.Contains(example, want) {
-			t.Errorf("example.env misses %q", want)
+			t.Errorf("app.env misses %q", want)
 		}
 	}
 
@@ -155,7 +154,7 @@ func TestRender_reportsKayraChanges(t *testing.T) {
 	if r, err = Render(c, dir, RenderOptions{Force: true}); err != nil || r.Kayra {
 		t.Fatalf("same render: %+v %v, want nothing changed", r, err)
 	}
-	c.Example.Port = 18080 // example.env and env only
+	c.App.Port = 18080 // app.env only
 	if r, err = Render(c, dir, RenderOptions{Force: true}); err != nil || r.Kayra {
 		t.Fatalf("example port: %+v %v, want Kayra unchanged", r, err)
 	}
@@ -202,16 +201,16 @@ func TestRender_cancelsWithoutForce(t *testing.T) {
 		t.Fatal(err)
 	}
 	// and a change in dev.yaml: canceled too
-	c.Example.Port = 18080
+	c.App.Port = 18080
 	if r, err = Render(c, dir, RenderOptions{}); err != nil || !r.Pending {
 		t.Fatalf("render: %+v %v, want pending", r, err)
 	}
-	for _, want := range []string{"--- a/kayra.yaml", "-  max_concurrent_reconciles: 50", "+  max_concurrent_reconciles: 5", "--- a/env", "+EXAMPLE_PORT=18080"} {
+	for _, want := range []string{"--- a/kayra.yaml", "-  max_concurrent_reconciles: 50", "+  max_concurrent_reconciles: 5", "--- a/app.env", "+INFRAPI_APP_LISTEN_ADDRESS=\"0.0.0.0:18080\""} {
 		if !strings.Contains(r.Diff, want) {
 			t.Errorf("diff misses %q:\n%s", want, r.Diff)
 		}
 	}
-	if got := strings.Join(r.Files, " "); got != "env example.env kayra.yaml" {
+	if got := strings.Join(r.Files, " "); got != "app.env kayra.yaml" {
 		t.Errorf("files = %q", got)
 	}
 	if read(t, path) != edited {

@@ -1,0 +1,38 @@
+# [[ .Name ]]: make help lists the targets.
+
+BINARY := [[ .Name ]]
+[[- if .GoPrivate ]]
+# the private modules: go fetches them from their repository, not the proxy
+export GOPRIVATE ?= [[ .GoPrivate ]]
+[[- end ]]
+
+.DEFAULT_GOAL := help
+.PHONY: help generate fmt lint test build run snapshot clean
+
+help: ## list the targets
+	@awk 'BEGIN {FS = ":.*## "} /^[a-z-]+:.*## / {printf "  %-10s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+generate: ## the Go code from the contracts, api/*.yaml (infrapi-cli app generate)
+	go generate ./...
+
+fmt: ## format the code
+	gofmt -w .
+
+lint: ## vet and lint (golangci-lint)
+	go vet ./...
+	golangci-lint run
+
+test: ## the tests
+	go test ./...
+
+build: ## bin/[[ .Name ]]
+	CGO_ENABLED=0 go build -trimpath -o bin/$(BINARY) ./cmd/$(BINARY)
+
+run: ## run it against the dev stack (infrapi-cli dev up), with .infrapi-dev/app.env
+	INFRAPI_CONFIG_DOTENV_FILE=.infrapi-dev/app.env go run ./cmd/$(BINARY)
+
+snapshot: ## every release artifact, locally, unpublished (goreleaser)
+	goreleaser release --snapshot --clean
+
+clean: ## remove bin/ and dist/
+	rm -rf bin dist

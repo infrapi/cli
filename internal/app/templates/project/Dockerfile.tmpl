@@ -1,0 +1,20 @@
+[[- if .Docker -]]
+# The [[ .Name ]] image, built by GoReleaser (dockers_v2 in .goreleaser.yaml)
+# from the binary it has just built, for each platform. Its settings: a
+# dotenv file mounted at /etc/[[ .Name ]]/[[ .Name ]].env.
+#
+#   podman run -v ./app.env:/etc/[[ .Name ]]/[[ .Name ]].env:ro,z -p 8080:8080 [[ .Image ]]
+FROM docker.io/library/alpine:3.22
+
+# ca-certificates: Kayra and anything else over TLS
+RUN apk add --no-cache ca-certificates \
+ && adduser -D -H -u 10001 [[ .Name ]]
+
+ARG TARGETPLATFORM
+COPY $TARGETPLATFORM/[[ .Name ]] /usr/local/bin/
+
+ENV INFRAPI_CONFIG_DOTENV_FILE=/etc/[[ .Name ]]/[[ .Name ]].env
+USER [[ .Name ]]
+EXPOSE 8080
+ENTRYPOINT ["[[ .Name ]]"]
+[[ end -]]

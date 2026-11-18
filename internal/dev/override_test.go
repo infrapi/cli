@@ -35,7 +35,7 @@ gateway:
       uri: /mine/*
       upstream: {type: roundrobin, nodes: {"host.containers.internal:9000": 1}}
     httpbin: null
-example:
+app:
   env:
     INFRAPI_APP_LOG_LEVEL: debug
     MY_FLAG: "a b"
@@ -143,18 +143,18 @@ func TestOverride_routesCommand(t *testing.T) {
 	}
 }
 
-// example.env and compose.env replace a variable in place, and add the
+// app.env and compose.env replace a variable in place, and add the
 // others after, quoted when needed.
 func TestOverride_env(t *testing.T) {
 	_, dir := renderOverrides(t, "")
-	example := read(t, filepath.Join(dir, "example.env"))
-	for _, want := range []string{"INFRAPI_APP_LOG_LEVEL=debug\n", "# dev.yaml's example.env\nMY_FLAG=\"a b\"\n"} {
+	example := read(t, filepath.Join(dir, "app.env"))
+	for _, want := range []string{"INFRAPI_APP_LOG_LEVEL=debug\n", "# dev.yaml's app.env\nMY_FLAG=\"a b\"\n"} {
 		if !strings.Contains(example, want) {
-			t.Errorf("example.env misses %q:\n%s", want, example)
+			t.Errorf("app.env misses %q:\n%s", want, example)
 		}
 	}
 	if strings.Contains(example, `INFRAPI_APP_LOG_LEVEL="info"`) {
-		t.Error("example.env keeps the replaced value")
+		t.Error("app.env keeps the replaced value")
 	}
 	env := read(t, filepath.Join(dir, "env"))
 	for _, want := range []string{"KAYRA_PORT=18081\n", "# dev.yaml's compose.env\nAPISIX_IMAGE=apache/apisix:3.12.0-debian\n"} {
@@ -204,7 +204,7 @@ func TestOverride_invalid(t *testing.T) {
 		"kayra: {config: [a]}\n":                   "kayra.config: a map",
 		"gateway: {routes: {My.Route: {}}}\n":      "gateway.routes.My.Route: a route id",
 		"gateway: {routes: {mine: [a]}}\n":         "gateway.routes.mine: a route",
-		"example: {env: {1BAD: x}}\n":              "example.env.1BAD: an environment variable name",
+		"app: {env: {1BAD: x}}\n":                  "app.env.1BAD: an environment variable name",
 		"compose: {env: {OK: \"a\\nb\"}}\n":        "compose.env.OK: one line",
 		"kayra: {config: {a: 1}, nope: true}\n":    "field nope not found",
 		"gateway: {routes: {kayra: null}, x: 1}\n": "field x not found",
@@ -231,7 +231,7 @@ func TestOverride_keep(t *testing.T) {
 	}
 	edit("kayra.yaml", "max_concurrent_reconciles: 50", "max_concurrent_reconciles: 7")
 	edit("kayra.yaml", "gateway_url: \"http://apisix:9080\"", "gateway_url: \"http://apisix:9081\"")
-	edit("example.env", "INFRAPI_APP_LOG_LEVEL=debug", "INFRAPI_APP_LOG_LEVEL=warn")
+	edit("app.env", "INFRAPI_APP_LOG_LEVEL=debug", "INFRAPI_APP_LOG_LEVEL=warn")
 	edit(filepath.Join("routes", "03-healthz.json"), `"uri": "/healthz"`, `"uri": "/health"`)
 	if err := os.WriteFile(filepath.Join(dir, "routes", "09-extra.json"), []byte(`{"uri": "/extra"}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -243,7 +243,7 @@ func TestOverride_keep(t *testing.T) {
 	}
 	got := keepYAML(r.Keep, "")
 	for _, want := range []string{
-		"example:\n  env:\n    INFRAPI_APP_LOG_LEVEL: warn\n",
+		"app:\n  env:\n    INFRAPI_APP_LOG_LEVEL: warn\n",
 		"gateway:\n  routes:\n    extra:\n      uri: /extra\n    healthz:\n      uri: /health\n",
 		"kayra:\n  config:\n    reconciler:\n      gateway_url: http://apisix:9081\n      max_concurrent_reconciles: 7\n",
 	} {
@@ -275,8 +275,8 @@ func TestOverride_keep(t *testing.T) {
 			t.Errorf("kayra.yaml misses %q", want)
 		}
 	}
-	if !strings.Contains(read(t, filepath.Join(dir, "example.env")), "INFRAPI_APP_LOG_LEVEL=warn\n") {
-		t.Error("example.env")
+	if !strings.Contains(read(t, filepath.Join(dir, "app.env")), "INFRAPI_APP_LOG_LEVEL=warn\n") {
+		t.Error("app.env")
 	}
 	routes := map[string]string{}
 	entries, _ := os.ReadDir(filepath.Join(dir, "routes"))

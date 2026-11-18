@@ -1,0 +1,25 @@
+[[- if eq .CI "gitlab" -]]
+# [[ .Name ]]'s CI, infrapi/ci's Go pipeline: on a push or a merge request,
+# lint, test and build; on a tag v<x.y.z>, the release (GoReleaser:
+# .goreleaser.yaml). Its inputs: https://github.com/infrapi/ci
+[[- if .GoPrivate ]]
+# GOPRIVATE_TOKEN, a CI/CD variable: a token reading the private modules
+# (CI_JOB_TOKEN when unset).
+[[- end ]]
+[[- if and .Docker .Registry ]]
+# REGISTRY_USERNAME, REGISTRY_PASSWORD: CI/CD variables, to push the image.
+[[- end ]]
+include:
+  - remote: https://raw.githubusercontent.com/infrapi/ci/[[ .CIRef ]]/gitlab/go.yml
+    inputs:
+      binary: [[ .Name ]]
+[[- if .GoPrivate ]]
+      goprivate: "[[ .GoPrivate ]]"
+[[- end ]]
+[[- if .Docker ]]
+      docker: true
+[[- if .Registry ]]
+      registry: [[ .Registry ]]
+[[- end ]]
+[[- end ]]
+[[ end -]]

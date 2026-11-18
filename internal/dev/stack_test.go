@@ -161,23 +161,6 @@ func TestContexts(t *testing.T) {
 	}
 }
 
-// Example runs go run with the rendered settings, through a go.work in
-// .infrapi-dev against a lib checkout.
-func TestExample_libSrc(t *testing.T) {
-	s, rec := testStack(t, "", StackOptions{})
-	if err := s.Example(context.Background(), "examples/compute", "/src/lib"); err != nil {
-		t.Fatal(err)
-	}
-	example := filepath.Join(s.Dir, "examples", "compute")
-	if got := rec.lines(); len(got) != 2 || got[0] != "go work init "+example+" /src/lib" || got[1] != "go run ." {
-		t.Fatalf("commands: %v", got)
-	}
-	run := rec.cmds[1]
-	if run.Dir != example || strings.Join(run.Env, " ") != "INFRAPI_CONFIG_DOTENV_FILE="+filepath.Join(s.Out, "example.env")+" GOWORK="+filepath.Join(s.Out, "go.work") {
-		t.Errorf("go run: dir %s env %v", run.Dir, run.Env)
-	}
-}
-
 // Build does nothing without kayra.src.
 func TestBuild_withoutSrc(t *testing.T) {
 	s, rec := testStack(t, "", StackOptions{})
@@ -244,7 +227,7 @@ func TestOpenStack_findsConfig(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ConfigName), []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	sub := filepath.Join(dir, "examples", "compute")
+	sub := filepath.Join(dir, "internal", "compute")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +276,7 @@ func TestCompose_onRenderedFiles(t *testing.T) {
 	if err := s.Compose(context.Background(), "ps"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(errOut.String(), "warning: .infrapi-dev differs from dev.yaml (env, example.env, kayra.yaml") {
+	if !strings.Contains(errOut.String(), "warning: .infrapi-dev differs from dev.yaml (env, kayra.yaml") {
 		t.Errorf("no warning: %q", errOut.String())
 	}
 	if read(t, filepath.Join(s.Out, "kayra.yaml")) != kayra {

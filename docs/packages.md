@@ -1,6 +1,6 @@
 ---
 title: Packages
-description: infrapi-cli's internal packages - clicontext, its saved logins, oauth2login, the browser-based login, and dev, the local dev stack.
+description: infrapi-cli's internal packages - clicontext, its saved logins, oauth2login, the browser-based login, app, the API project generator, and dev, the local dev stack.
 weight: 50
 ---
 
@@ -24,7 +24,7 @@ Persists `cmd/infrapi-cli`'s own login state to `~/.config/infrapi/config` — w
 server a token belongs to, and the token itself — in the same
 current-context/contexts shape `kubectl` keeps in `~/.kube/config`.
 [`infrapi-cli login`](commands.md#login) writes to it on every successful
-login; [`infrapi-cli context`](commands.md#context) reads and switches it.
+login; [`infrapi-cli auth context`](commands.md#context) reads and switches it.
 
 ```go
 f, err := clicontext.Load()               // reads Path(), or an empty File if it doesn't exist yet
@@ -41,7 +41,7 @@ err = f.Save()                             // writes back to Path(), dir 0700 / 
 name, ctx, err := f.Current()              // errors if nothing has ever logged in
 err = f.Use("self")                        // switch without touching credentials
 err = f.Delete("self")                     // drop a saved context
-names := f.Names()                         // sorted, for stable `context list` output
+names := f.Names()                         // sorted, for stable `auth context list` output
 ```
 
 `Path()` resolves `$INFRAPI_CONTEXT_FILE` first, then
@@ -190,7 +190,23 @@ import "github.com/infrapi/cli/internal/dev"
 | | |
 |---|---|
 | `LoadConfig` | reads `dev.yaml`, refusing an unknown key, sets the defaults and checks it |
-| `Stack` | a stack: its `dev.yaml`, found in the working directory or a parent, its directory, and how its containers run. `Up`, `Build`, `Compose` (down, clean, ps, logs...), `ResetKayra`, `Mint` and `Contexts`, `Health`, `Routes`, `Example`, `Check`, `Doctor`. The containers go through `<engine> compose` with `os/exec`, the only way that behaves the same with podman and docker; what talks to Kayra or APISIX is Go |
-| `Render` | renders `.infrapi-dev/` from `dev.yaml`: `env`, `kayra.yaml` (the embedded `templates/kayra.yaml.tmpl`, `kayra.config` merged in), `users.yaml`, `routes/*.json` (`gateway.routes` merged in, `routes/removed`), `example.env`, the signing keys (generated, or `kayra.keys`). Without `Force`, a render that would change a file writes nothing: `Rendered` holds the diff, the files, and `Keep`, the `dev.yaml` overrides that would give the files as they are |
+| `Stack` | a stack: its `dev.yaml`, found in the working directory or a parent, its directory, and how its containers run. `Up`, `Build`, `Compose` (down, clean, ps, logs...), `ResetKayra`, `Mint` and `Contexts`, `Health`, `Routes`, `Check`, `Doctor`. The containers go through `<engine> compose` with `os/exec`, the only way that behaves the same with podman and docker; what talks to Kayra or APISIX is Go |
+| `Render` | renders `.infrapi-dev/` from `dev.yaml`: `env`, `kayra.yaml` (the embedded `templates/kayra.yaml.tmpl`, `kayra.config` merged in), `users.yaml`, `routes/*.json` (`gateway.routes` merged in, `routes/removed`), `app.env`, the stack (`templates/stack`: compose, APISIX, Kayra's Dockerfile), the signing keys (generated, or `kayra.keys`). Without `Force`, a render that would change a file writes nothing: `Rendered` holds the diff, the files, and `Keep`, the `dev.yaml` overrides that would give the files as they are |
 | `Gateway` | an API's route through APISIX's Admin API |
-| `Init` | renders a scaffold ([hay-kot/scaffold](https://github.com/hay-kot/scaffold)), `DefaultTemplate` being `https://github.com/infrapi/dev` |
+| `WriteConfig`, `Ask` | a new `dev.yaml`, from the embedded `templates/dev.yaml.tmpl` and its answers: `dev init` without one, and `app init` |
+
+## app
+
+```go
+import "github.com/infrapi/cli/internal/app"
+```
+
+`infrapi-cli app`'s code, see [app](app.md) for the commands. No dependency
+of its own: `text/template`, `go/format`, `gopkg.in/yaml.v3`.
+
+| | |
+|---|---|
+| `Init`, `Ask` | a new project from the embedded `templates/project` (`[[ ]]` delimiters, `_name_` in a path the API's name, a file rendering to nothing not written), then its `dev.yaml` and its generated code |
+| `Add` | a resource's paths and schema inserted into the contract as text, its other lines kept; then `Generate`, and the operations' file and its test, written once |
+| `Generate` | the contracts read (`readContracts`: `info.title`, `info.x-infrapi-group`, the `operationId`s), then `api/zz_generated.go` and `internal/<name>/zz_generated.go`, formatted by `go/format` |
+| `Describe`, `FindRoot` | a project's API, as its contracts have it; the project a directory is in |

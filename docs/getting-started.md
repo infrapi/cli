@@ -49,7 +49,7 @@ you already have, a bootstrap token from `kayra token mint` say, save it
 directly:
 
 ```bash
-infrapi-cli context set admin --server https://kayra.example.com --token "$TOKEN"
+infrapi-cli auth context set admin --server https://kayra.example.com --token "$TOKEN"
 ```
 
 ## 3. Call the API
@@ -65,7 +65,7 @@ infrapi-cli auth can-i create subscriptions --api catalog.infrapi.io --namespace
 **curl**
 
 ```bash
-TOKEN=$(infrapi-cli context token)
+TOKEN=$(infrapi-cli auth context token)
 curl -s https://kayra.example.com/apis -H "Authorization: Bearer $TOKEN"
 curl -s https://kayra.example.com/apis/catalog.infrapi.io/v1/apiregistrations -H "Authorization: Bearer $TOKEN"
 ```

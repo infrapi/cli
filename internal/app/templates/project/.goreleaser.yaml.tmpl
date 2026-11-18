@@ -1,0 +1,96 @@
+# GoReleaser (https://goreleaser.com): a pushed tag v<x.y.z> releases
+# [[ .Name ]], built by the CI; make snapshot builds the same, locally.
+version: 2
+
+project_name: [[ .Name ]]
+
+builds:
+  - id: [[ .Name ]]
+    main: ./cmd/[[ .Name ]]
+    binary: [[ .Name ]]
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+[[- if .Archives ]]
+
+archives:
+  - id: [[ .Name ]]
+    ids: ["[[ .Name ]]"]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    files:
+      - README.md
+[[- end ]]
+[[- if or .Deb .RPM ]]
+
+# The packages: the binary in /usr/bin, a systemd unit, its settings in
+# /etc/[[ .Name ]]/[[ .Name ]].env (kept on upgrade).
+nfpms:
+  - id: [[ .Name ]]
+    ids: ["[[ .Name ]]"]
+    package_name: [[ .Name ]]
+    description: The [[ .Name ]] API.
+    maintainer: "[[ .Name ]] maintainers"
+    formats:
+[[- if .Deb ]]
+      - deb
+[[- end ]]
+[[- if .RPM ]]
+      - rpm
+[[- end ]]
+    bindir: /usr/bin
+    contents:
+      - src: packaging/[[ .Name ]].service
+        dst: /usr/lib/systemd/system/[[ .Name ]].service
+      - src: packaging/[[ .Name ]].env
+        dst: /etc/[[ .Name ]]/[[ .Name ]].env
+        type: config|noreplace
+        file_info:
+          mode: 0640
+[[- end ]]
+[[- if .Docker ]]
+
+# The image, multi-platform: the binary above in the Dockerfile. The CI
+# logs in to the registry first.
+dockers_v2:
+  - id: [[ .Name ]]
+    ids: ["[[ .Name ]]"]
+    dockerfile: Dockerfile
+    images:
+      - [[ .Image ]]
+    tags:
+      - "{{ .Version }}"
+      - "{{ if not .Prerelease }}{{ .Major }}.{{ .Minor }}{{ end }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.title: [[ .Name ]]
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.created: "{{ .Date }}"
+[[- end ]]
+
+checksum:
+  name_template: checksums.txt
+[[- if eq .CI "gitlab" ]]
+
+# the project's GitLab, its release published with the pipeline's token
+gitlab_urls:
+  api: "{{ .Env.CI_API_V4_URL }}"
+  download: "{{ .Env.CI_SERVER_URL }}"
+  use_job_token: true
+[[- end ]]
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  use: git
+  filters:
+    exclude: ["^docs:", "^test:", "^chore:"]

@@ -1,0 +1,48 @@
+# [[ .Name ]]
+
+The [[ .Name ]] API, `/apis/[[ .Group ]]/v1`, built on
+[infrapi/lib](https://github.com/infrapi/lib): its contract,
+[api/[[ .Name ]]-v1.yaml](api/[[ .Name ]]-v1.yaml), checked on every request,
+each one authenticated and authorized by [Kayra](https://infrapi.github.io/products/kayra/).
+
+## Layout
+
+```text
+api/[[ .Name ]]-v1.yaml          the contract: edit it, then make generate
+api/zz_generated.go       generated: its schemas as Go types, Group, Roots, Contracts
+cmd/[[ .Name ]]/main.go          the server
+internal/config/          the settings, INFRAPI_APP_* and [[ .EnvPrefix ]]_*
+internal/[[ .Name ]]/            the implementation: Service, one file per resource
+internal/[[ .Name ]]/zz_generated.go  generated: Handlers, Register
+dev.yaml                  the dev stack's settings (infrapi-cli dev)
+.goreleaser.yaml          the release: archives, packages, image
+```
+
+## Develop
+
+With [infrapi-cli](https://infrapi.github.io/products/cli/docs/getting-started/#1-install),
+Go and podman or docker:
+
+```bash
+infrapi-cli dev init          # the dev stack, in .infrapi-dev/, from dev.yaml
+infrapi-cli dev up            # Kayra, etcd and APISIX
+infrapi-cli dev contexts      # dev-admin and dev-<user> contexts
+
+infrapi-cli app add vm        # a resource: its paths and schema, internal/[[ .Name ]]/vms.go
+$EDITOR api/[[ .Name ]]-v1.yaml      # its fields
+make generate                 # the Go code from the contract
+make run                      # the API, on :8080, with .infrapi-dev/app.env
+infrapi-cli app register      # registered in Kayra, routed by the gateway
+```
+
+A resource's operations answer 501 Not Implemented until written: see
+[Develop an API](https://infrapi.github.io/products/cli/docs/develop/develop-an-api/).
+
+`make help` lists the targets: `generate`, `fmt`, `lint`, `test`, `build`,
+`run`, `snapshot`.
+
+## Release
+
+A pushed tag `v<x.y.z>` releases it: the CI runs GoReleaser
+(`.goreleaser.yaml`)[[ if or .Archives .Deb .RPM .Docker ]], which builds[[ if .Archives ]] the archives[[ end ]][[ if or .Deb .RPM ]][[ if .Archives ]],[[ end ]] the[[ if .Deb ]] deb[[ end ]][[ if and .Deb .RPM ]] and[[ end ]][[ if .RPM ]] rpm[[ end ]] packages[[ end ]][[ if .Docker ]][[ if or .Archives .Deb .RPM ]] and[[ end ]] the image, [[ .Image ]][[ end ]][[ end ]].
+`make snapshot` builds the same locally, unpublished.

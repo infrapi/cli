@@ -1,186 +1,112 @@
 package dev
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
-	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
-
-	"github.com/infrapi/cli/internal/ui"
+	"text/template"
 
 	"charm.land/huh/v2"
-	"github.com/go-git/go-git/v5/plumbing/transport"
-	"github.com/hay-kot/scaffold/app/core/engine"
-	"github.com/hay-kot/scaffold/app/core/rwfs"
-	"github.com/hay-kot/scaffold/app/scaffold"
-	"github.com/hay-kot/scaffold/app/scaffold/pkgs"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
-// DefaultTemplate is the dev stack's template: infrapi/dev, a scaffold
-// (github.com/hay-kot/scaffold) whose scaffold.yaml asks for the domain,
-// the platform, the region and Kayra's image.
-const DefaultTemplate = "https://github.com/infrapi/dev"
-
-// InitOptions are infrapi-cli dev init's.
-type InitOptions struct {
-	// Template is a scaffold: a git URL (…/dev@v1.2.0 pins a tag,
-	// …/dev#subdir a directory in it) or a local path. DefaultTemplate
-	// when empty.
-	Template string
-	// Name is the new stack's directory, in Dir. Asked when empty and
-	// prompting.
-	Name string
-	// Dir is where the stack's directory is created, "." when empty.
-	Dir string
-	// Vars answers the template's questions: domain, platform... Prompting,
-	// they are the answers' defaults; with NoPrompt, the answers, every
-	// other question taking its default.
-	Vars map[string]any
-	// NoPrompt asks nothing: Name is required.
-	NoPrompt bool
-	// Force overwrites files the stack's directory has already.
-	Force bool
-	// Cache is where a remote template is cloned, and reused on the next
-	// init. os.UserCacheDir()/infrapi/templates when empty.
-	Cache string
+// Answers are what a new dev.yaml is written from: dev init's questions,
+// and app init's API.
+type Answers struct {
+	// Domain is Kayra's API domain: infrapi.io when empty.
+	Domain string
+	// Platform is sandbox, preprod or prod: sandbox when empty.
+	Platform string
+	// Region is eu-west-1 when empty.
+	Region string
+	// Image is Kayra's: ghcr.io/infrapi/kayra:latest when empty.
+	Image string
+	// API is the API developed against the stack, its group in full or its
+	// name: compute when empty.
+	API string
+	// Port is where it listens on the host: 8080 when empty.
+	Port int
 }
 
-// Init renders the template into Dir/Name, and returns that directory.
-func Init(o InitOptions, out io.Writer) (string, error) {
-	// scaffold logs through zerolog's global logger, at debug by default:
-	// its errors come back as errors, the rest is noise here.
-	log.Logger = zerolog.Nop()
-	if o.Template == "" {
-		o.Template = DefaultTemplate
-	}
-	if o.Dir == "" {
-		o.Dir = "."
-	}
-	if o.Cache == "" {
-		base, err := os.UserCacheDir()
-		if err != nil {
-			return "", err
-		}
-		o.Cache = filepath.Join(base, "infrapi", "templates")
-	}
-	if o.NoPrompt && o.Name == "" {
-		return "", errors.New("dev init: a name is required without prompts")
-	}
-	if err := os.MkdirAll(o.Cache, 0o750); err != nil {
-		return "", err
-	}
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	path, err := pkgs.NewResolver(nil, o.Cache, cwd).Resolve(o.Template, nil, noAuth)
-	if err != nil {
-		return "", fmt.Errorf("dev init: template %s: %w", o.Template, err)
-	}
-	if err := refresh(o.Template, o.Cache, path, out); err != nil {
-		return "", err
-	}
-
-	template := os.DirFS(path)
-	p, err := scaffold.LoadProject(template, scaffold.Options{NoClobber: !o.Force})
-	if err != nil {
-		return "", fmt.Errorf("dev init: template %s: %w", o.Template, err)
-	}
-
-	vars := map[string]any{}
-	for k, v := range o.Vars {
-		vars[k] = v
-	}
-	if o.Name != "" {
-		vars["Project"] = o.Name
-	}
-	eng := engine.New()
-	if o.NoPrompt {
-		if err := defaults(p, vars); err != nil {
-			return "", err
-		}
-		p.Name = o.Name
-	} else {
-		vars, err = p.AskQuestions(vars, eng, huh.ThemeFunc(huh.ThemeCharm))
-		if err != nil {
-			return "", err
+func (a *Answers) defaults() {
+	def := func(s *string, v string) {
+		if *s == "" {
+			*s = v
 		}
 	}
-	if p.Name == "" || strings.ContainsAny(p.Name, `/\`) || p.Name == "." || p.Name == ".." {
-		return "", fmt.Errorf("dev init: name %q: a directory name", p.Name)
+	def(&a.Domain, "infrapi.io")
+	def(&a.Platform, "sandbox")
+	def(&a.Region, "eu-west-1")
+	def(&a.Image, "ghcr.io/infrapi/kayra:latest")
+	def(&a.API, "compute")
+	if a.Port == 0 {
+		a.Port = 8080
 	}
-
-	all, err := scaffold.BuildVars(eng, p, vars)
-	if err != nil {
-		return "", err
-	}
-	err = scaffold.RenderRWFS(eng, &scaffold.RWFSArgs{Project: p, ReadFS: template, WriteFS: rwfs.NewOsWFS(o.Dir)}, all)
-	if err != nil {
-		return "", fmt.Errorf("dev init: %w", err)
-	}
-
-	if msg := p.Conf.Messages.Post; msg != "" {
-		rendered, err := eng.TmplString(msg, all)
-		if err != nil {
-			return "", err
-		}
-		_, _ = fmt.Fprintln(out, strings.TrimSpace(rendered))
-	}
-	return filepath.Join(o.Dir, p.Name), nil
 }
 
-// refresh pulls the cached clone of a remote template that follows a
-// branch: scaffold clones it once, then reuses it as it is. A template
-// pinned to a tag (…/dev@v1.2.0) is kept; a failed pull, offline say, keeps
-// the cached copy, with a warning.
-func refresh(template, cache, path string, out io.Writer) error {
-	remote, ok := pkgs.IsRemote(template, nil)
-	if !ok {
-		return nil
-	}
-	pkg, err := pkgs.ParseRemote(remote)
+// ErrConfigExists is WriteConfig's refusal to overwrite a dev.yaml.
+var ErrConfigExists = errors.New("dev.yaml exists")
+
+// WriteConfig writes a new dev.yaml at path from a, its every setting
+// commented, and checks it loads. It never overwrites one.
+func WriteConfig(path string, a Answers) error {
+	a.defaults()
+	src, err := templates.ReadFile("templates/dev.yaml.tmpl")
 	if err != nil {
 		return err
 	}
-	if pkg.Version != "" && !strings.EqualFold(pkg.Version, "head") {
-		return nil
-	}
-	rel, err := filepath.Rel(cache, path)
+	t, err := template.New("dev.yaml").Delims("[[", "]]").Option("missingkey=error").Parse(string(src))
 	if err != nil {
 		return err
 	}
-	updated, err := pkgs.Update(cache, rel)
-	switch {
-	case err != nil:
-		_, _ = fmt.Fprintf(ui.Writer(out), "%s template %s: not updated, using the copy in %s: %v\n", ui.Warn("warning:"), template, cache, err)
-	case updated:
-		_, _ = fmt.Fprintf(ui.Writer(out), "template %s: %s\n", ui.Name(template), ui.OK("updated"))
+	var b bytes.Buffer
+	if err := t.Execute(&b, map[string]any{
+		"Domain": a.Domain, "Platform": a.Platform, "Region": a.Region, "Image": a.Image,
+		"API": a.API, "Port": a.Port, "AppName": AppName(a.API),
+	}); err != nil {
+		return err
 	}
-	return nil
+	// the answers make a dev.yaml the CLI takes, or none is written
+	if _, err := parseConfig(b.Bytes(), filepath.Dir(path)); err != nil {
+		return fmt.Errorf("dev.yaml: %w", err)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644) //#nosec G302 G304 -- dev.yaml, committed with the project
+	if errors.Is(err, fs.ErrExist) {
+		return fmt.Errorf("%s: %w", path, ErrConfigExists)
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(b.Bytes()); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
-// defaults fills vars with the default of every question it has no answer
-// to, and fails on a required one that has none.
-func defaults(p *scaffold.Project, vars map[string]any) error {
-	for _, q := range p.Conf.Questions {
-		if _, ok := vars[q.Name]; ok {
-			continue
-		}
-		if q.Prompt.Default == nil {
-			if q.Required {
-				return fmt.Errorf("dev init: %s is required, --set %s=<value>", q.Name, q.Name)
+// Ask asks for the answers dev init needs, a's values the defaults.
+func Ask(a *Answers) error {
+	a.defaults()
+	return huh.NewForm(huh.NewGroup(
+		huh.NewInput().Title("Domain").
+			Description("Kayra's API domain: its groups are system.<domain>, catalog.<domain>, authorization.<domain>").
+			Value(&a.Domain).Validate(func(s string) error {
+			if !dnsName.MatchString(s) {
+				return errors.New("a lower case DNS name of two labels or more, like infrapi.io")
 			}
-			continue
-		}
-		vars[q.Name] = q.Prompt.Default
-	}
-	return nil
+			return nil
+		}),
+		huh.NewSelect[string]().Title("Platform").Description("as infrapi/lib takes it").
+			Options(huh.NewOptions("sandbox", "preprod", "prod")...).Value(&a.Platform),
+		huh.NewInput().Title("Region").Value(&a.Region).Validate(func(s string) error {
+			if !dnsLabel.MatchString(s) {
+				return errors.New("a lower case DNS label")
+			}
+			return nil
+		}),
+		huh.NewInput().Title("Kayra image").
+			Description("set kayra.src in dev.yaml to build it from a checkout instead").Value(&a.Image),
+	)).WithTheme(huh.ThemeFunc(huh.ThemeCharm)).Run()
 }
-
-// noAuth clones a public template anonymously.
-var noAuth = pkgs.AuthProviderFunc(func(string) (transport.AuthMethod, bool) { return nil, false })

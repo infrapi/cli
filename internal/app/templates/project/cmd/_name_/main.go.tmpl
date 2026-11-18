@@ -1,0 +1,85 @@
+// Command [[ .Name ]] serves the [[ .Name ]] API, /apis/[[ .Group ]]/<version>:
+// its contracts, api/[[ .Name ]]-<version>.yaml, checked on every request,
+// each one authenticated and authorized by Kayra. Its settings are read by
+// internal/config.
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/infrapi/lib/pkg/auth"
+	"github.com/infrapi/lib/pkg/listener"
+	"github.com/infrapi/lib/pkg/logger"
+	"github.com/infrapi/lib/pkg/server"
+
+	"[[ .Module ]]/api"
+	"[[ .Module ]]/internal/config"
+	"[[ .Module ]]/internal/[[ .Name ]]"
+)
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := run(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, "[[ .Name ]]:", err)
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	log, err := logger.New(logger.Options{Level: cfg.App.AppLogLevel.String(), Format: cfg.App.AppLogFormat, Name: "[[ .Name ]]"})
+	if err != nil {
+		return err
+	}
+	logger.SetDefault(log)
+	defer func() { _ = logger.Sync() }()
+
+	// Kayra answers who the caller is (cached) and whether they may act,
+	// on every request. Its URL is all there is to configure: the rest is
+	// in its /.well-known/kayra.json.
+	kayra, err := auth.NewClient(auth.ClientOptions{BaseURL: cfg.AuthURL})
+	if err != nil {
+		return err
+	}
+	// <root>/-/ (healthz, metrics, openapi.json, docs...) for each root, the
+	// contracts checked before any handler runs
+	engine, err := server.NewServerGin(cfg.App, api.Roots,
+		server.WithAuth(kayra.Middleware()), server.WithOpenAPI(api.Contracts()...))
+	if err != nil {
+		return err
+	}
+	[[ .Name ]].Register(engine.Group("", kayra.RequireAccess()), [[ .Name ]].New())
+
+	ln, err := listener.Listen(cfg.App)
+	if err != nil {
+		return err
+	}
+	srv := &http.Server{Handler: engine, ReadHeaderTimeout: 10 * time.Second}
+	served := make(chan error, 1)
+	go func() { served <- srv.Serve(ln) }()
+	log.Info("serving", logger.String("address", ln.Addr().String()), logger.Any("roots", api.Roots),
+		logger.String("auth", cfg.AuthURL))
+
+	select {
+	case err := <-served:
+		return err
+	case <-ctx.Done():
+	}
+	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}

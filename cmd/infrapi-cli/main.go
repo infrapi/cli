@@ -72,9 +72,9 @@ func newRoot() *cli.Command {
 		},
 		Commands: append([]*cli.Command{
 			loginCommand(),
-			contextCommand(),
 			authCommand(),
 			apisCommand(),
+			appCommand(),
 			devCommand(),
 		}, verbCommands()...),
 		CommandNotFound: func(ctx context.Context, cmd *cli.Command, name string) {
@@ -173,10 +173,10 @@ func runLogin(ctx context.Context, cmd *cli.Command) error {
 	}
 	// The token itself is deliberately never printed here — it's
 	// sitting in the context file this just wrote, retrievable any
-	// time via `context token`, which is the one place it should have
+	// time via `auth context token`, which is the one place it should have
 	// to be read back from.
 	_, _ = fmt.Fprintf(ui.Stderr(), "infrapi-cli: %s saved context %s to %s (now current)\n", ui.OK("logged in:"), ui.Name(name), path)
-	_, _ = fmt.Fprintf(ui.Stdout(), "infrapi-cli: run %s to print the bearer token\n", ui.Cmd("infrapi-cli context token"))
+	_, _ = fmt.Fprintf(ui.Stdout(), "infrapi-cli: run %s to print the bearer token\n", ui.Cmd("infrapi-cli auth context token"))
 	return nil
 }
 
@@ -186,8 +186,9 @@ func runLogin(ctx context.Context, cmd *cli.Command) error {
 // to, or retrieved again without logging in a second time.
 func contextCommand() *cli.Command {
 	return &cli.Command{
-		Name:  "context",
-		Usage: "manage saved logins in ~/.config/infrapi/config",
+		Name:    "context",
+		Aliases: []string{"ctx"},
+		Usage:   "manage saved logins in ~/.config/infrapi/config",
 		Commands: []*cli.Command{
 			{
 				Name:   "list",
@@ -286,7 +287,7 @@ func runContextCurrent(ctx context.Context, cmd *cli.Command) error {
 func runContextSet(ctx context.Context, cmd *cli.Command) error {
 	name := cmd.Args().First()
 	if name == "" {
-		return fmt.Errorf("context: usage: infrapi-cli context set <name> --server <url> --token <token>")
+		return fmt.Errorf("auth context: usage: infrapi-cli auth context set <name> --server <url> --token <token>")
 	}
 
 	f, err := clicontext.Load()
@@ -309,7 +310,7 @@ func runContextSet(ctx context.Context, cmd *cli.Command) error {
 func runContextUse(ctx context.Context, cmd *cli.Command) error {
 	name := cmd.Args().First()
 	if name == "" {
-		return fmt.Errorf("context: usage: infrapi-cli context use <name>")
+		return fmt.Errorf("auth context: usage: infrapi-cli auth context use <name>")
 	}
 
 	f, err := clicontext.Load()
@@ -330,7 +331,7 @@ func runContextUse(ctx context.Context, cmd *cli.Command) error {
 func runContextDelete(ctx context.Context, cmd *cli.Command) error {
 	name := cmd.Args().First()
 	if name == "" {
-		return fmt.Errorf("context: usage: infrapi-cli context delete <name>")
+		return fmt.Errorf("auth context: usage: infrapi-cli auth context delete <name>")
 	}
 
 	f, err := clicontext.Load()
@@ -371,15 +372,15 @@ func runContextToken(ctx context.Context, cmd *cli.Command) error {
 	return nil
 }
 
-// authCommand groups the two checks that ask a server about the
-// current login itself rather than managing it: "can-i" (an
-// authorization decision) and "whoami" (the identity that decision
-// would be made against).
+// authCommand groups what is about the login itself: "context" (the
+// saved logins), "can-i" (an authorization decision) and "whoami" (the
+// identity that decision would be made against).
 func authCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "auth",
-		Usage: "ask a server about the current login: can-i, whoami",
+		Usage: "the saved logins (context, ctx), and what a server says of the current one: can-i, whoami",
 		Commands: []*cli.Command{
+			contextCommand(),
 			canICommand(),
 			whoamiCommand(),
 		},

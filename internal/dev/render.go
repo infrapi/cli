@@ -36,7 +36,8 @@ const keyIndent = "          "
 //	kayra.yaml    Kayra's configuration, the signing keys in it
 //	users.yaml    the users of Kayra's local provider
 //	routes/*.json the gateway's own routes, loaded by apisix/routes.sh
-//	example.env   the example API's settings
+//	app.env       the API's settings, as infrapi/lib reads them (app.port...)
+//	.gitignore    the whole directory, for git
 //	keys/*.pem    the signing keys, generated when missing or when NewKeys
 //	compose.yaml, compose.docker.yaml, apisix/config.yaml, apisix/routes.sh,
 //	kayra/Dockerfile: the stack itself, from templates/stack, gateway.config
@@ -84,7 +85,7 @@ type Rendered struct {
 	Pending bool
 	// Keep is what to add to dev.yaml for the render to give the files as
 	// they are on disk, edits made by hand included: kayra.config,
-	// gateway.routes, compose.env, example.env. Keys are left out.
+	// gateway.routes, compose.env, app.env. Keys are left out.
 	Keep map[string]any
 }
 
@@ -146,10 +147,12 @@ func plan(c *Config, dir string, newKeys bool) (*rendering, error) {
 		return nil, err
 	}
 	files := map[string][]byte{
-		"env":         []byte(withEnv(envFile(c), c.Compose.Env, "compose.env")),
-		"kayra.yaml":  kayra,
-		"users.yaml":  append([]byte("# The users of dev.yaml, rendered by infrapi-cli dev render: edit dev.yaml.\n"), users...),
-		"example.env": []byte(withEnv(exampleEnv(c), c.Example.Env, "example.env")),
+		"env":        []byte(withEnv(envFile(c), c.Compose.Env, "compose.env")),
+		"kayra.yaml": kayra,
+		"users.yaml": append([]byte("# The users of dev.yaml, rendered by infrapi-cli dev render: edit dev.yaml.\n"), users...),
+		"app.env":    []byte(withEnv(appEnv(c), c.App.Env, "app.env")),
+		// git ignores the directory: it is rendered, and has keys
+		".gitignore": []byte("# Rendered by infrapi-cli dev render: the whole directory is.\n*\n"),
 	}
 	if err := stackFiles(c, files); err != nil {
 		return nil, err
@@ -211,7 +214,7 @@ func plan(c *Config, dir string, newKeys bool) (*rendering, error) {
 		}
 		pl.writes[name] = files[name]
 		pl.files = append(pl.files, name)
-		if name != "env" && name != "example.env" {
+		if name != "env" && name != "app.env" && name != ".gitignore" {
 			pl.kayra = true
 		}
 	}
@@ -457,8 +460,6 @@ func envFile(c *Config) string {
 		{"CONTROL_PORT", fmt.Sprint(c.Ports.Control)},
 		{"ETCD_PORT", fmt.Sprint(c.Ports.Etcd)},
 		{"SYSADMIN_GROUP", c.SysadminGroups[0]},
-		{"EXAMPLE_API", c.FullAPI(c.Example.API)},
-		{"EXAMPLE_PORT", fmt.Sprint(c.Example.Port)},
 	}
 	var b strings.Builder
 	b.WriteString("# Rendered by infrapi-cli dev render from dev.yaml: edit dev.yaml.\n")
@@ -471,13 +472,14 @@ func envFile(c *Config) string {
 // localImage is the image make build builds from kayra.src.
 const localImage = "kayra-dev:local"
 
-// exampleEnv is the example API's dotenv: infrapi/lib's INFRAPI_APP_*
-// keys, its group and Kayra's URL, through the gateway.
-func exampleEnv(c *Config) string {
-	name, _, _ := strings.Cut(c.FullAPI(c.Example.API), ".")
+// appEnv is the API's dotenv, as infrapi-cli app init's internal/config
+// reads it: infrapi/lib's INFRAPI_APP_* keys, and Kayra's URL through the
+// gateway, as <NAME>_AUTH_URL.
+func appEnv(c *Config) string {
+	name := AppName(c.FullAPI(c.App.API))
 	gateway := fmt.Sprintf("http://localhost:%d", c.Ports.Gateway)
 	return strings.Join([]string{
-		"# The example API's settings, rendered by infrapi-cli dev render from dev.yaml.",
+		"# The API's settings, rendered by infrapi-cli dev render from dev.yaml's app.",
 		"INFRAPI_APP_NAME=" + q(name),
 		"INFRAPI_APP_PLATFORM=" + q(c.Platform),
 		"INFRAPI_APP_REGION=" + q(c.Region),
@@ -485,7 +487,7 @@ func exampleEnv(c *Config) string {
 		"INFRAPI_APP_FQDN=" + q(name+".localhost.local"),
 		"INFRAPI_APP_URL=" + q(gateway),
 		"# 0.0.0.0: APISIX, in a container, reaches it through host.containers.internal",
-		"INFRAPI_APP_LISTEN_ADDRESS=" + q(fmt.Sprintf("0.0.0.0:%d", c.Example.Port)),
+		"INFRAPI_APP_LISTEN_ADDRESS=" + q(fmt.Sprintf("0.0.0.0:%d", c.App.Port)),
 		`INFRAPI_APP_LOG_LEVEL="info"`,
 		`INFRAPI_APP_TRUSTED_PROXIES=[]`,
 		`INFRAPI_APP_CORS_ALLOW_ORIGINS=["*"]`,
@@ -495,11 +497,23 @@ func exampleEnv(c *Config) string {
 		`INFRAPI_APP_CORS_ALLOW_CREDENTIALS="true"`,
 		`INFRAPI_APP_CORS_MAX_AGE="12"`,
 		"",
-		"# its API group, and Kayra, through the gateway",
-		"COMPUTE_API_GROUP=" + q(c.FullAPI(c.Example.API)),
-		"COMPUTE_AUTH_URL=" + q(gateway),
+		"# Kayra, through the gateway",
+		EnvPrefix(name) + "_AUTH_URL=" + q(gateway),
 		"",
 	}, "\n")
+}
+
+// AppName is an API's short name, its group's first label: compute for
+// compute.infrapi.io.
+func AppName(group string) string {
+	name, _, _ := strings.Cut(group, ".")
+	return name
+}
+
+// EnvPrefix is the prefix of an API's own settings: COMPUTE for compute,
+// MY_API for my-api.
+func EnvPrefix(name string) string {
+	return strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
 }
 
 func q(s string) string { return `"` + s + `"` }

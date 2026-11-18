@@ -2,7 +2,7 @@ package main
 
 // Human-readable rendering of the generic verbs' responses (see
 // verbs.go): a table of NAMESPACE (namespaced resources only), NAME,
-// CREATED AT and UPDATED AT — the same style as `context list`. Use
+// CREATED AT and UPDATED AT — the same style as `auth context list`. Use
 // -o json or -o yaml for every field.
 
 import (
@@ -98,7 +98,7 @@ func rowName(row map[string]any) string {
 }
 
 // timestampCell renders an RFC 3339 timestamp in local time, like
-// `context list`'s EXPIRY; "-" when absent (a record written before
+// `auth context list`'s EXPIRY; "-" when absent (a record written before
 // timestamps existed, or a resource that has none).
 func timestampCell(v any) string {
 	s, _ := v.(string)
