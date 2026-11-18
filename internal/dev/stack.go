@@ -380,12 +380,17 @@ func (s *Stack) Up(ctx context.Context, o RenderOptions) error {
 		}
 	}
 	p := s.Config.Ports
-	url := func(port int) string { return ui.URL(fmt.Sprintf("http://localhost:%d", port)) }
+	// the pages worth opening: a click on each shows something
+	url := func(port int, path string) string { return ui.URL(fmt.Sprintf("http://localhost:%d%s", port, path)) }
 	_, _ = fmt.Fprintf(ui.Writer(s.stdout), "\n  %s   %s   %s %s   %s %s\n  %s   %s\n",
-		ui.Bold("Kayra"), url(p.Kayra), ui.Bold("gateway"), url(p.Gateway), ui.Bold("APISIX Admin API"), url(p.Admin),
+		ui.Bold("Kayra"), url(p.Kayra, wellKnown), ui.Bold("gateway"), url(p.Gateway, wellKnown),
+		ui.Bold("APISIX Admin API"), url(p.Admin, "/ui/"),
 		ui.Bold("next:"), ui.Cmd("infrapi-cli dev contexts"))
 	return nil
 }
+
+// wellKnown is Kayra's discovery document, the first page to open.
+const wellKnown = "/.well-known/kayra.json"
 
 // ResetKayra wipes Kayra's objects from etcd, its routes and keys kept,
 // then restarts Kayra and its reconciler.

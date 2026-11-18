@@ -69,8 +69,8 @@ func TestContextFlagOverridesForOneCall(t *testing.T) {
 	}
 }
 
-// The saved logins are under auth: auth context, or auth ctx; there is no
-// top-level context command.
+// The logins are under auth: auth login, auth context, or auth ctx; there
+// is no top-level login or context command.
 func TestAuthContext(t *testing.T) {
 	t.Setenv("INFRAPI_CONTEXT_FILE", filepath.Join(t.TempDir(), "config"))
 	run := func(args ...string) error {
@@ -92,7 +92,12 @@ func TestAuthContext(t *testing.T) {
 	if f.CurrentContext != "a" || len(f.Contexts) != 2 {
 		t.Errorf("current %q, contexts %v", f.CurrentContext, f.Names())
 	}
-	if c := newRoot().Command("context"); c != nil {
-		t.Error("a top-level context command is still there")
+	for _, name := range []string{"context", "login"} {
+		if c := newRoot().Command(name); c != nil {
+			t.Errorf("a top-level %s command is still there", name)
+		}
+	}
+	if newRoot().Command("auth").Command("login") == nil {
+		t.Error("no auth login")
 	}
 }

@@ -34,12 +34,12 @@ go build -o infrapi-cli ./cmd/infrapi-cli
 
 ## 2. Log in
 
-`login` opens your browser on the server's own login page, and saves the
+`auth login` opens your browser on the server's own login page, and saves the
 result as a context in `~/.config/infrapi/config` (`INFRAPI_CONTEXT_FILE`
 to keep it elsewhere):
 
 ```bash
-infrapi-cli login --server https://kayra.example.com
+infrapi-cli auth login --server https://kayra.example.com
 infrapi-cli auth whoami
 ```
 

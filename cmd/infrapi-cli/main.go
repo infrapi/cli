@@ -71,7 +71,6 @@ func newRoot() *cli.Command {
 			},
 		},
 		Commands: append([]*cli.Command{
-			loginCommand(),
 			authCommand(),
 			apisCommand(),
 			appCommand(),
@@ -91,7 +90,7 @@ func newRoot() *cli.Command {
 // without needing a real slug library for what's really just a host.
 var contextNameSanitizer = regexp.MustCompile(`[^a-z0-9_.]+`)
 
-// sanitizeContextName derives `login`'s default --context-name from
+// sanitizeContextName derives `auth login`'s default --context-name from
 // --server: its host[:port] (dropping scheme and path — the part that
 // actually tells two servers apart), lowercased and sanitized. Falls
 // back to "default" for a URL with no host at all.
@@ -181,7 +180,7 @@ func runLogin(ctx context.Context, cmd *cli.Command) error {
 }
 
 // contextCommand manages ~/.config/infrapi/config — the kubeconfig-style
-// current-context/contexts file `login` writes to (see
+// current-context/contexts file `auth login` writes to (see
 // internal/clicontext), so a saved login can be listed, switched back
 // to, or retrieved again without logging in a second time.
 func contextCommand() *cli.Command {
@@ -238,7 +237,7 @@ func runContextList(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	if len(f.Contexts) == 0 {
-		_, _ = fmt.Fprintf(ui.Stdout(), "infrapi-cli: no saved contexts — run %s\n", ui.Cmd("infrapi-cli login --server <url>"))
+		_, _ = fmt.Fprintf(ui.Stdout(), "infrapi-cli: no saved contexts — run %s\n", ui.Cmd("infrapi-cli auth login --server <url>"))
 		return nil
 	}
 
@@ -372,14 +371,15 @@ func runContextToken(ctx context.Context, cmd *cli.Command) error {
 	return nil
 }
 
-// authCommand groups what is about the login itself: "context" (the
-// saved logins), "can-i" (an authorization decision) and "whoami" (the
-// identity that decision would be made against).
+// authCommand groups what is about the login itself: "login", "context"
+// (the saved logins), "can-i" (an authorization decision) and "whoami"
+// (the identity that decision would be made against).
 func authCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "auth",
-		Usage: "the saved logins (context, ctx), and what a server says of the current one: can-i, whoami",
+		Usage: "log in, keep the logins (context, ctx), and ask a server about the current one: can-i, whoami",
 		Commands: []*cli.Command{
+			loginCommand(),
 			contextCommand(),
 			canICommand(),
 			whoamiCommand(),

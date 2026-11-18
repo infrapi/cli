@@ -78,9 +78,18 @@ func TestUp_recreatesOnlyOnChange(t *testing.T) {
 	ctx := context.Background()
 	recreate := "--force-recreate --no-deps kayra reconciler gateway-init"
 
+	var out strings.Builder
+	s.stdout = &out
 	if err := s.Up(ctx, RenderOptions{}); err != nil { // fresh: nothing running yet
 		t.Fatal(err)
 	}
+	// links to click on
+	for _, want := range []string{"http://localhost:8081/.well-known/kayra.json", "http://localhost:9080/.well-known/kayra.json", "http://localhost:9180/ui/"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("up printed no %s:\n%s", want, out.String())
+		}
+	}
+	s.stdout = io.Discard
 	rec.running = true
 	if err := s.Up(ctx, RenderOptions{}); err != nil { // running, nothing changed
 		t.Fatal(err)

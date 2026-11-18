@@ -221,7 +221,7 @@ services:
 
 The stack has no identity provider: Kayra signs its tokens itself, with the
 keys in `.infrapi-dev/keys/`. There is no password and no
-`infrapi-cli login` here, the tokens come from Kayra directly.
+`infrapi-cli auth login` here, the tokens come from Kayra directly.
 
 The users are `dev.yaml`'s, a stand-in for a company directory: Kayra
 reads a token's groups from there.

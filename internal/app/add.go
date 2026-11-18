@@ -267,7 +267,7 @@ var schemaSnippet = template.Must(template.New("schema").Delims("[[", "]]").Pars
       format: date-time
       readOnly: true
       description: When it was created.
-    # [[ .Name ]]'s own fields, then make generate: a type each, string,
+    # [[ .Name ]]'s own fields, then infrapi-cli app generate: a type each, string,
     # integer, number, boolean, array or object, required listed above.
     # Example:
     # size:

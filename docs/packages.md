@@ -23,7 +23,7 @@ import "github.com/infrapi/cli/internal/clicontext"
 Persists `cmd/infrapi-cli`'s own login state to `~/.config/infrapi/config` — which
 server a token belongs to, and the token itself — in the same
 current-context/contexts shape `kubectl` keeps in `~/.kube/config`.
-[`infrapi-cli login`](commands.md#login) writes to it on every successful
+[`infrapi-cli auth login`](commands.md#login) writes to it on every successful
 login; [`infrapi-cli auth context`](commands.md#context) reads and switches it.
 
 ```go
@@ -60,7 +60,7 @@ import "github.com/infrapi/cli/internal/oauth2login"
 Runs a real browser-based OAuth2 Authorization Code + PKCE flow against
 a remote provider — the same flow `oc login` runs against OpenShift's
 own `/oauth/authorize?client_id=...&code_challenge=...&redirect_uri=...`.
-CLI-only ([`infrapi-cli login`](commands.md#login)); the API server never
+CLI-only ([`infrapi-cli auth login`](commands.md#login)); the API server never
 runs this half — it only ever verifies tokens the provider already
 issued, never requests them.
 
@@ -117,7 +117,7 @@ type Result struct {
 }
 ```
 
-`AccessToken` is what `infrapi-cli login` saves into the current
+`AccessToken` is what `infrapi-cli auth login` saves into the current
 context ([clicontext](#clicontext)) — the provider's own token,
 never a self-signed Kayra JWT, since there is no LDAP/local bind
 here to embed anything from: the provider's own token/userinfo already
@@ -130,7 +130,7 @@ carries whatever a claims-backed `authorizations.<name>` entry needs
 result, err := oauth2login.LoginToServerManual(ctx, serverBaseURL, os.Stdin, os.Stderr)
 ```
 
-`infrapi-cli login --no-browser`, for a terminal with no usable browser.
+`infrapi-cli auth login --no-browser`, for a terminal with no usable browser.
 Same `Result`, same PKCE pair, same final exchange as `LoginToServer`,
 but no loopback listener: it sends `redirect_uri=OOBRedirectURI`, prints
 the authorize URL to stderr for the user to open on any machine, then

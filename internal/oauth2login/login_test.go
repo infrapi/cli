@@ -118,7 +118,7 @@ func asBrowser(t *testing.T) {
 }
 
 // fakeAgnosticBroker stands in for oauth2broker's /oauth2/v1/authorize
-// and /oauth2/v1/callback exactly as `infrapi-cli login` sees them: no
+// and /oauth2/v1/callback exactly as `infrapi-cli auth login` sees them: no
 // provider is ever named on the way in, and the callback relays back
 // a fixed token_endpoint/client_id alongside the code — the one extra
 // contract LoginToServer depends on that Login doesn't. Which
@@ -139,7 +139,7 @@ func fakeAgnosticBroker(t *testing.T, idpAuthorizeURL, tokenEndpoint, clientID s
 	mux.HandleFunc("/oauth2/v1/authorize", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		if q.Get("provider") != "" {
-			http.Error(w, "infrapi-cli login must never send a provider", http.StatusBadRequest)
+			http.Error(w, "infrapi-cli auth login must never send a provider", http.StatusBadRequest)
 			return
 		}
 		brokerState := "broker-" + q.Get("state")
@@ -209,7 +209,7 @@ func TestLoginToServerRequiresServer(t *testing.T) {
 }
 
 // TestLoginToServerFailsWithoutTokenEndpoint covers an old broker that
-// predates `infrapi-cli login`'s relay contract (or a bug in a new one): it
+// predates `infrapi-cli auth login`'s relay contract (or a bug in a new one): it
 // approves the login but never hands back a token_endpoint/client_id,
 // which LoginToServer has no other way to learn — it must fail loudly
 // rather than attempt the exchange with nothing to exchange against.

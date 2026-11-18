@@ -63,6 +63,7 @@ META='"metadata": {"namespace": "thetenant", "region": "eu-west-1", "platform": 
 
 ```bash
 infrapi-cli app add vm
+# singular vm, plural vms
 # api/compute-v1.yaml updated
 # api/zz_generated.go written
 # internal/compute/zz_generated.go written
@@ -92,9 +93,11 @@ func (s *Service) GetVM(ctx context.Context, namespace, name string) (api.VM, er
 ```
 
 `vms.go` and `vms_test.go` are yours: `app add` writes them once, and
-refuses a resource the contract has already. `--plural` names the paths
-(`vms` by default), `--kind` the schema (`VM`), `--cluster` puts the
-resource outside the namespaces, `/apis/compute.infrapi.io/v1/vms`.
+refuses a resource the contract has already. `app add vms` does the same:
+the singular or the plural, the other one is inferred. When it is
+inferred wrong, `--singular` and `--plural` set it, `--kind` names the
+schema (`VM`), and `--cluster` puts the resource outside the namespaces,
+`/apis/compute.infrapi.io/v1/vms`.
 
 ## 3. Describe it in the contract
 
@@ -127,7 +130,7 @@ contract, under `components.schemas.VM.properties`:
 Then generate the Go code again:
 
 ```bash
-make generate        # go generate ./..., which runs infrapi-cli app generate
+infrapi-cli app generate   # what make generate and go generate ./... run too
 ```
 
 `api/zz_generated.go` now has:
@@ -480,7 +483,7 @@ A field, an operation or a resource more: change the contract (or
 `infrapi-cli app add <resource>`), then:
 
 ```bash
-make generate              # the Go code from the contract
+infrapi-cli app generate   # the Go code from the contract
 go build ./...             # an operation not written yet is a compile error: write it in internal/compute
 infrapi-cli app register   # Kayra reads the spec again; restart make run first
 ```

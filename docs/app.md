@@ -66,8 +66,15 @@ The project starts on lib `v0.16.0` and Go 1.27.3.
 ## app add
 
 ```bash
-infrapi-cli app add vm [--plural vms] [--kind VM] [--cluster] [--version v1]
+infrapi-cli app add vm [--singular vm] [--plural vms] [--kind VM] [--cluster] [--version v1]
 ```
+
+The resource is named singular or plural, `vm` or `vms`: the other form is
+inferred, by an English rule of thumb (`policy`, `policies`;
+`environments`, `environment`), and printed first. When it gets one wrong,
+set it: `infrapi-cli app add cache --plural caches`, `infrapi-cli app add
+--singular person --plural people`. `--kind` is the schema's, the Go
+type's name, from the singular.
 
 It adds to the contract the resource's paths, `.../namespaces/{namespace}/vms`
 and `.../vms/{name}` (`.../vms` with `--cluster`), with five operations,

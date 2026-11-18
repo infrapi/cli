@@ -8,7 +8,7 @@ each one authenticated and authorized by [Kayra](https://infrapi.github.io/produ
 ## Layout
 
 ```text
-api/[[ .Name ]]-v1.yaml          the contract: edit it, then make generate
+api/[[ .Name ]]-v1.yaml          the contract: edit it, then infrapi-cli app generate
 api/zz_generated.go       generated: its schemas as Go types, Group, Roots, Contracts
 cmd/[[ .Name ]]/main.go          the server
 internal/config/          the settings, INFRAPI_APP_* and [[ .EnvPrefix ]]_*
@@ -30,7 +30,7 @@ infrapi-cli dev contexts      # dev-admin and dev-<user> contexts
 
 infrapi-cli app add vm        # a resource: its paths and schema, internal/[[ .Name ]]/vms.go
 $EDITOR api/[[ .Name ]]-v1.yaml      # its fields
-make generate                 # the Go code from the contract
+infrapi-cli app generate      # the Go code from the contract
 make run                      # the API, on :8080, with .infrapi-dev/app.env
 infrapi-cli app register      # registered in Kayra, routed by the gateway
 ```

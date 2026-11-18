@@ -12,7 +12,7 @@
 // exchange below still happens directly against the provider, exactly
 // as if there were no relay in between.
 //
-// This is `infrapi-cli login`'s entire flow: a plain end user on their own
+// This is `infrapi-cli auth login`'s entire flow: a plain end user on their own
 // laptop who knows only a server URL, never a provider name, and never
 // reads any local config at all. The broker resolves which provider to
 // use entirely on its own (see oauth2broker.handleAuthorize) and hands
@@ -76,7 +76,7 @@ type Result struct {
 // stderr always also receives the URL to open by hand.
 var OpenBrowser = defaultOpenBrowser
 
-// LoginToServer is `infrapi-cli login`'s entire flow: a plain end user on
+// LoginToServer is `infrapi-cli auth login`'s entire flow: a plain end user on
 // their own laptop who knows nothing but a Kayra server URL — no
 // provider name, no discovery URL, no client_id, and no local
 // kayra.yaml to read any of that from. It asks serverBaseURL's own
@@ -262,7 +262,7 @@ func startLogin(serverBaseURL, redirectURI string) (state, verifier, authURL str
 func exchange(ctx context.Context, serverBaseURL string, result callbackResult, verifier string) (*Result, error) {
 	base := strings.TrimRight(serverBaseURL, "/")
 	if result.TokenEndpoint == "" || result.ClientID == "" {
-		return nil, fmt.Errorf("oauth2login: server did not relay a token endpoint/client id at the callback — is %s running a kayra build new enough for `infrapi-cli login`?", base)
+		return nil, fmt.Errorf("oauth2login: server did not relay a token endpoint/client id at the callback — is %s running a kayra build new enough for `infrapi-cli auth login`?", base)
 	}
 
 	// No local config, so no provider-specific proxy to honor either:
@@ -336,7 +336,7 @@ func callbackHandler(wantState string, resultCh chan<- callbackResult, errCh cha
 // every Kayra API error); the terminal gets err's plain detail via errCh
 // instead, never liberrors' operator-facing Error() form.
 func fail(w http.ResponseWriter, err *liberrors.Error) {
-	err = err.WithSolution("check the terminal and run `infrapi-cli login` again")
+	err = err.WithSolution("check the terminal and run `infrapi-cli auth login` again")
 	body, merr := err.MarshalJSON()
 	if merr != nil {
 		body = []byte(`{"detail":"` + err.Message + `"}`)

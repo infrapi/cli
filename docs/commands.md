@@ -1,13 +1,13 @@
 ---
 title: Commands
-description: Reference for infrapi-cli's commands against a Kayra server - login, auth (context, can-i, whoami), apis, and the get, create, update, patch and delete verbs.
+description: Reference for infrapi-cli's commands against a Kayra server - auth (login, context, can-i, whoami), apis, and the get, create, update, patch and delete verbs.
 weight: 30
 ---
 
 # Commands
 
 Every command here talks to a Kayra server's own API, through a saved
-context (`login`, `auth context set`). The dev stack's commands are in
+context (`auth login`, `auth context set`). The dev stack's commands are in
 [dev](dev.md).
 
 ## Colors
@@ -46,7 +46,7 @@ export http_proxy=$https_proxy
 export no_proxy=.example.com,10.0.0.0/8
 ```
 
-Every call goes through it: Kayra's API, `login`, `app register`. `go mod
+Every call goes through it: Kayra's API, `auth login`, `app register`. `go mod
 tidy`, after `app init`, reads them too.
 `localhost` and loopback addresses are always reached directly, so the
 dev stack's own calls (Kayra, the gateway, APISIX's Admin API) never go
@@ -64,7 +64,11 @@ For the dev stack:
 
 The containers of the stack don't get them: they only talk to each other.
 
-## Logging in
+## Logging in (auth)
+
+`infrapi-cli auth` is everything about the login itself: `auth login`,
+the saved logins (`auth context`, or `auth ctx`), and what a server says
+of the current one (`auth can-i`, `auth whoami`).
 
 The portable, end-user client of a Kayra server — hand someone this
 binary and a server URL, nothing else. It never reads `kayra.yaml`, has no `--config`
@@ -80,7 +84,7 @@ of — the one way to authenticate with this binary.
 > The commands below use `infrapi-cli`: [install it](getting-started.md#1-install).
 
 ```bash
-infrapi-cli login --server https://kayra.example.com
+infrapi-cli auth login --server https://kayra.example.com
 # oauth2login: opening browser to log in:
 #
 #   https://kayra.example.com/oauth2/v1/authorize?...
@@ -123,7 +127,7 @@ the server shows a login code instead of redirecting back to
 `127.0.0.1`. Paste that code at the prompt:
 
 ```bash
-infrapi-cli login --server https://kayra.example.com --no-browser
+infrapi-cli auth login --server https://kayra.example.com --no-browser
 # oauth2login: open this URL in a browser on any machine to log in:
 #
 #   https://kayra.example.com/oauth2/v1/authorize?...redirect_uri=urn%3Aietf%3Awg%3Aoauth%3A2.0%3Aoob...
@@ -146,15 +150,9 @@ provider's app registration: it still only ever sees Kayra's own
 
 See [oauth2login](packages.md#oauth2login) for how the flow itself works.
 
-### auth (context, can-i, whoami)
+### context
 
-Everything about the login itself: the saved logins (`auth context`, or
-`auth ctx`), and what a server says of the current one (`auth can-i`,
-`auth whoami`).
-
-#### context
-
-`infrapi-cli auth context`, or `auth ctx`, manages `~/.config/infrapi/config` — the file `login` writes to on every
+`infrapi-cli auth context`, or `auth ctx`, manages `~/.config/infrapi/config` — the file `auth login` writes to on every
 successful login ([internal/clicontext](packages.md#clicontext)). Its
 shape mirrors `kubectl`'s own `~/.kube/config`: a map of named contexts
 (server, token, expiry) plus a `current_context`, so switching back to an
@@ -162,8 +160,8 @@ earlier login never requires authenticating again. Override the path with
 `$INFRAPI_CONTEXT_FILE`.
 
 ```bash
-infrapi-cli login --server https://kayra.internal
-infrapi-cli login --server https://kayra-staging.internal --context-name staging
+infrapi-cli auth login --server https://kayra.internal
+infrapi-cli auth login --server https://kayra-staging.internal --context-name staging
 
 infrapi-cli auth context list
 # CURRENT  NAME                       SERVER                            EXPIRY
@@ -189,7 +187,7 @@ infrapi-cli auth context delete staging        # drop a saved login
 | `delete` | `<name>` | remove a saved context |
 | `token` | `[name]` | print a context's bearer token (defaults to current) |
 
-##### One call in another context
+#### One call in another context
 
 `--context <name>` runs one command in a saved context, without changing
 the current one, like `kubectl --context`. Every command takes it, before
@@ -204,13 +202,13 @@ infrapi-cli auth context current                        # still the one you had
 
 An unknown name is refused, and nothing is called.
 
-#### can-i and whoami
+### can-i and whoami
 
 Two checks that ask a server about the current login itself, rather
 than managing it. Like every command, they take
 [`--context`](#one-call-in-another-context).
 
-##### can-i
+#### can-i
 
 Mirrors `kubectl auth can-i`: asks the server's own
 [check endpoint](https://infrapi.github.io/kayra/architecture/rbac-and-auth/#authorizing-other-apps-requests),
@@ -259,7 +257,7 @@ command nor the server exposes that comparison any other way.
 | `--api` | — | required; the API group being asked about, by its full name (`compute.infrapi.io`) or short name (`compute`, resolved through `GET /apis`) — never Kayra's own `authorization.<domain>` |
 | `--namespace` | — | required; the namespace to check against |
 
-##### whoami
+#### whoami
 
 Prints exactly what the server's own `GET /oauth2/userinfo` returns
 for the current login — `sub`, `provider`, `authorization`, `groups`,

@@ -40,7 +40,7 @@ Or take a release archive: see
 |---|---|---|
 | Go 1.27.3+ | builds and runs your API | `go version` |
 | podman 4.7+ **or** docker, with compose | runs the stack's containers | `podman compose version`, or `docker compose version` |
-| `make` | your project's targets: `make run`, `make generate`... | `make --version` |
+| `make` | your project's targets: `make run`, `make test`... | `make --version` |
 | `curl` | only for the `curl` examples of these docs | `curl --version` |
 
 podman is used when it is installed, docker otherwise. To use docker
@@ -146,7 +146,7 @@ They work from any directory of the project.
 
 ## 6. Log in
 
-On a real Kayra you log in with `infrapi-cli login --server <url>`: your
+On a real Kayra you log in with `infrapi-cli auth login --server <url>`: your
 browser goes through the server's identity provider. The dev stack has no
 identity provider, so Kayra signs the tokens itself. `infrapi-cli dev contexts` asks it
 for three, and saves each as an `infrapi-cli` context:

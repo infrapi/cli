@@ -168,6 +168,20 @@ func TestAdd(t *testing.T) {
 	if _, err := Add(root, Resource{Name: "vm", Plural: "machines"}); err == nil {
 		t.Error("a second VM schema")
 	}
+	// named by its plural: the singular inferred
+	env, err := Add(root, Resource{Name: "environments"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.Singular != "environment" || env.Plural != "environments" {
+		t.Errorf("environments: %s, %s", env.Singular, env.Plural)
+	}
+	if c := read(t, contract); !strings.Contains(c, "/namespaces/{namespace}/environments:\n") || !strings.Contains(c, "\n    Environment:\n") {
+		t.Errorf("contract:\n%s", c)
+	}
+	if _, err := Add(root, Resource{Name: "sheep", Plural: "sheep"}); err == nil {
+		t.Error("sheep, its singular its plural: added")
+	}
 	// a cluster resource, its file its plural's
 	if _, err := Add(root, Resource{Name: "flavor", Cluster: true}); err != nil {
 		t.Fatal(err)

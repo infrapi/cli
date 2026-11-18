@@ -1,7 +1,7 @@
 // Package clicontext persists cmd/cli's own login state — which
 // Kayra server a token was fetched for, and the token itself — to
 // ~/.config/infrapi/config, in the same current-context/contexts
-// shape kubeconfig uses. `infrapi-cli login` always upserts the
+// shape kubeconfig uses. `infrapi-cli auth login` always upserts the
 // context it just produced and switches to it; `infrapi-cli auth context
 // use <name>` switches back to an earlier one without logging in
 // again.
@@ -62,7 +62,7 @@ func Path() (string, error) {
 
 // Load reads the context file at its default Path, returning an
 // empty File (never nil) if it doesn't exist yet — the first
-// `infrapi-cli login` on a fresh machine is what creates it.
+// `infrapi-cli auth login` on a fresh machine is what creates it.
 func Load() (*File, error) {
 	path, err := Path()
 	if err != nil {
@@ -156,7 +156,7 @@ func (f *File) Delete(name string) error {
 // silently returning the zero value.
 func (f *File) Current() (string, Context, error) {
 	if f.CurrentContext == "" {
-		return "", Context{}, errors.New("clicontext: no current context — run `infrapi-cli login` or `infrapi-cli auth context use <name>`")
+		return "", Context{}, errors.New("clicontext: no current context — run `infrapi-cli auth login` or `infrapi-cli auth context use <name>`")
 	}
 	ctx, ok := f.Contexts[f.CurrentContext]
 	if !ok {

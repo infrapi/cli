@@ -10,7 +10,7 @@ InfraPI's command line, one binary for three things:
 
 - **Kayra's client.** Log in to a Kayra server you only know the URL of,
   keep the login as a context, ask whether you may act, list the APIs, and
-  call them: `login`, `context`, `auth`, `apis`, `get`, `create`,
+  call them: `auth` (`login`, `context`, `can-i`, `whoami`), `apis`, `get`, `create`,
   `update`, `patch`, `delete`. It never reads a server's configuration:
   everything goes through the server's own API.
 - **Your API.** Create a Go project on infrapi/lib, add resources to its
