@@ -440,10 +440,11 @@ func runContextToken(ctx context.Context, cmd *cli.Command) error {
 func authCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "auth",
-		Usage: "log in, keep the logins (context, ctx), and ask a server about the current one: can-i, whoami",
+		Usage: "log in, keep the logins (context, ctx), list and revoke them at the server (sessions), and ask it about the current one: can-i, whoami",
 		Commands: []*cli.Command{
 			loginCommand(),
 			logoutCommand(),
+			sessionsCommand(),
 			contextCommand(),
 			canICommand(),
 			whoamiCommand(),

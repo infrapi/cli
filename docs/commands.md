@@ -67,8 +67,9 @@ The containers of the stack don't get them: they only talk to each other.
 ## Logging in (auth)
 
 `infrapi-cli auth` is everything about the login itself: `auth login`, `auth logout`,
-the saved logins (`auth context`, or `auth ctx`), and what a server says
-of the current one (`auth can-i`, `auth whoami`).
+the saved logins (`auth context`, or `auth ctx`), the logins at the server
+(`auth sessions`), and what a server says of the current one
+(`auth can-i`, `auth whoami`).
 
 The portable, end-user client of a Kayra server — hand someone this
 binary and a server URL, nothing else. It never reads `kayra.yaml`, has no `--config`
@@ -148,6 +149,26 @@ infrapi-cli auth logout
 ```
 
 See [oauth2login](packages.md#oauth2login) for how the flow itself works.
+
+### sessions
+
+Lists your logins at the server, infrapi-cli's on each machine and an MCP
+client's such as Claude's, the latest used first, the current context's
+marked `*`. `revoke` ends one, or every one with `--all`: its tokens are
+refused at once. Revoking the current one logs this context out too.
+`--user` names another user's, when your cluster roles grant `list` or
+`delete` on `sessions`, as the sysadmin's do.
+
+```bash
+infrapi-cli auth sessions
+# CURRENT  ID                      CLIENT                                              USER  CREATED  LAST USED  EXPIRES
+# *        cUxSnWX-cf-L4RWydyruzA  infrapi-cli                                         jdoe  2h       now        2026-11-26 20:22:15
+#          ECshjkCuuAl44zKe3Z4U6Q  https://claude.ai/oauth/mcp-oauth-client-metadata   jdoe  3d       1h         2026-11-25 19:10:02
+infrapi-cli auth sessions revoke ECshjkCuuAl44zKe3Z4U6Q
+# infrapi-cli: revoked session ECshjkCuuAl44zKe3Z4U6Q
+infrapi-cli auth sessions revoke --all --user asmith
+# infrapi-cli: revoked 2 session(s)
+```
 
 ### context
 
