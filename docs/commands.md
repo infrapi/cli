@@ -1,6 +1,6 @@
 ---
 title: Commands
-description: Reference for infrapi-cli's commands against a Kayra server - auth (login, context, can-i, whoami), apis, and the get, create, update, patch and delete verbs.
+description: Reference for infrapi-cli's commands against a Kayra server - auth (login, logout, context, can-i, whoami), apis, and the get, create, update, patch and delete verbs.
 weight: 30
 ---
 
@@ -66,7 +66,7 @@ The containers of the stack don't get them: they only talk to each other.
 
 ## Logging in (auth)
 
-`infrapi-cli auth` is everything about the login itself: `auth login`,
+`infrapi-cli auth` is everything about the login itself: `auth login`, `auth logout`,
 the saved logins (`auth context`, or `auth ctx`), and what a server says
 of the current one (`auth can-i`, `auth whoami`).
 
@@ -77,40 +77,35 @@ configures: every command here only ever talks to that server's own API.
 
 ### login
 
-A browser-based OAuth2 flow against a Kayra server you only know the URL
-of — the one way to authenticate with this binary.
+Logs in at a Kayra server you only know the URL of, through the browser:
+the server's [authorization server](https://infrapi.github.io/kayra/architecture/oauth2-server/)
+sends you to its login provider (Okta, say), and the context keeps the
+server's own tokens. The access token lasts 15 minutes; every command
+renews it before it expires, with the refresh token, without the browser,
+for as long as the login lasts (30 days, a week unused, by default).
 
 > [!TIP]
 > The commands below use `infrapi-cli`: [install it](getting-started.md#1-install).
 
 ```bash
 infrapi-cli auth login --server https://kayra.example.com
-# oauth2login: opening browser to log in:
+# oauth2login: opening the browser to log in:
 #
-#   https://kayra.example.com/oauth2/v1/authorize?...
+#   https://kayra.example.com/oauth2/authorize?...
 #
-# infrapi-cli: logged in — saved context "kayra.infrapi.io" to ~/.config/infrapi/config (now current)
+# infrapi-cli: logged in — saved context "kayra.example.com" to ~/.config/infrapi/config (now current)
 # infrapi-cli: run `infrapi-cli auth context token` to print the bearer token
 ```
 
 The token itself is never printed — it's already in the context file this
 just wrote; read it back with [`auth context token`](#context) whenever you
-actually need it.
-
-`--server`'s own `/oauth2/v1/authorize` resolves which
-`authentifications.<name>` to use on your behalf — automatically when the
-server configures exactly one `remote.oauth2` provider, or via a one-click
-chooser page when it configures several (each option there links straight
-to the provider's own login, never through a second confirmation click —
-see [oauth2broker](https://infrapi.github.io/kayra/packages/oauth2broker/)) — and relays that provider's
-own public token endpoint/client ID back at the end so this CLI can finish
-the PKCE exchange itself, with zero prior knowledge of which provider it
-was.
+actually need it (renewed first, when it is about to expire).
 
 Nothing about the server but its URL is saved: what the commands need of
-it, they discover — its check endpoint and own groups from
-[`/.well-known/kayra.json`](https://infrapi.github.io/kayra/packages/discovery/), every API group's full
-name and short name from `GET /apis`.
+it, they discover — its authorization server from
+`/.well-known/oauth-authorization-server`, its check endpoint and own
+groups from [`/.well-known/kayra.json`](https://infrapi.github.io/kayra/packages/discovery/),
+every API group's full name and short name from `GET /apis`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
@@ -123,30 +118,34 @@ name and short name from `GET /apis`.
 
 `--no-browser` starts no local listener and opens nothing. It prints the
 login URL; open it in a browser on **any** machine, log in as usual, and
-the server shows a login code instead of redirecting back to
-`127.0.0.1`. Paste that code at the prompt:
+the server shows a code instead of redirecting back to `127.0.0.1`. Paste
+that code at the prompt:
 
 ```bash
 infrapi-cli auth login --server https://kayra.example.com --no-browser
 # oauth2login: open this URL in a browser on any machine to log in:
 #
-#   https://kayra.example.com/oauth2/v1/authorize?...redirect_uri=urn%3Aietf%3Awg%3Aoauth%3A2.0%3Aoob...
+#   https://kayra.example.com/oauth2/authorize?...redirect_uri=urn%3Aietf%3Awg%3Aoauth%3A2.0%3Aoob...
 #
-# Paste the login code shown in the browser: eyJjb2RlIjoi...
-# infrapi-cli: logged in — saved context "kayra.infrapi.io" to ~/.config/infrapi/config (now current)
+# Paste the code shown in the browser: kq3V...
+# infrapi-cli: logged in — saved context "kayra.example.com" to ~/.config/infrapi/config (now current)
 ```
 
-The code is safe to carry across by hand: it is only redeemable together
-with the PKCE verifier held by the terminal that printed the URL, and only
-once, within the server's 10-minute login window. A code from any other
-login attempt is refused. Paste it only into a terminal where you started
-the login yourself.
+The code is safe to carry across by hand: it is redeemable only with the
+PKCE verifier held by the terminal that printed the URL, once, within a
+minute. Paste it only into a terminal where you started the login
+yourself.
 
-The final code→token exchange still runs from this terminal straight to
-the provider's token endpoint, so the terminal must be able to reach the
-provider (Okta, say) — just not with a browser. Nothing changes in the
-provider's app registration: it still only ever sees Kayra's own
-`/oauth2/v1/callback`.
+### logout
+
+Revokes the current login at its server (or `--context`'s): its refresh
+token, and with it every token of that login. The context stays, its
+server and namespace; `auth login` again to use it.
+
+```bash
+infrapi-cli auth logout
+# infrapi-cli: logged out of kayra.example.com
+```
 
 See [oauth2login](packages.md#oauth2login) for how the flow itself works.
 

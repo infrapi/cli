@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/infrapi/cli/internal/clicontext"
 )
@@ -179,5 +180,73 @@ func TestServerFlagIsAURL(t *testing.T) {
 	}
 	if f, _ := clicontext.Load(); f.Contexts["dev"].Server != "http://localhost:8081" {
 		t.Errorf("server: %q", f.Contexts["dev"].Server)
+	}
+}
+
+// A login's access token is renewed before it expires, its new tokens
+// saved; a login revoked asks for auth login; auth logout revokes it.
+func TestContextRenewAndLogout(t *testing.T) {
+	var bearers, revoked []string
+	srv := httptest.NewUnstartedServer(nil)
+	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			_, _ = w.Write([]byte(`{"issuer":"` + srv.URL + `","authorization_endpoint":"` + srv.URL + `/oauth2/authorize","token_endpoint":"` + srv.URL +
+				`/oauth2/token","revocation_endpoint":"` + srv.URL + `/oauth2/revoke","code_challenge_methods_supported":["S256"]}`))
+		case "/oauth2/token":
+			_ = r.ParseForm()
+			if r.PostForm.Get("refresh_token") != "refresh-1" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"its login is revoked"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"access_token":"access-2","token_type":"Bearer","expires_in":900,"refresh_token":"refresh-2"}`))
+		case "/oauth2/revoke":
+			_ = r.ParseForm()
+			revoked = append(revoked, r.PostForm.Get("token"))
+		default:
+			bearers = append(bearers, r.Header.Get("Authorization"))
+			_, _ = w.Write([]byte(`{"sub":"jdoe"}`))
+		}
+	})
+	srv.Start()
+	defer srv.Close()
+	t.Setenv("INFRAPI_CONTEXT_FILE", filepath.Join(t.TempDir(), "config"))
+	f, _ := clicontext.Load()
+	f.SetContext("dev", clicontext.Context{Server: srv.URL, Token: "access-1", RefreshToken: "refresh-1", Expiry: time.Now().Add(10 * time.Second)})
+	if err := f.Save(); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) error {
+		return newRoot().Run(context.Background(), append([]string{"infrapi-cli"}, args...))
+	}
+	if err := run("auth", "whoami"); err != nil {
+		t.Fatal(err)
+	}
+	f, _ = clicontext.Load()
+	if c := f.Contexts["dev"]; c.Token != "access-2" || c.RefreshToken != "refresh-2" || time.Until(c.Expiry) < 14*time.Minute {
+		t.Fatalf("not renewed: %+v", c)
+	}
+	if len(bearers) != 1 || bearers[0] != "Bearer access-2" {
+		t.Fatalf("bearers: %v", bearers)
+	}
+	// revoked meanwhile: asks for auth login
+	c := f.Contexts["dev"]
+	c.Expiry = time.Now()
+	f.Contexts["dev"] = c
+	_ = f.Save()
+	if err := run("auth", "whoami"); err == nil || !strings.Contains(err.Error(), "auth login") {
+		t.Fatalf("a revoked login: %v", err)
+	}
+	if err := run("auth", "logout"); err != nil {
+		t.Fatal(err)
+	}
+	f, _ = clicontext.Load()
+	if c := f.Contexts["dev"]; c.Token != "" || c.RefreshToken != "" || c.Server != srv.URL || len(revoked) != 1 || revoked[0] != "refresh-2" {
+		t.Fatalf("logout: %+v %v", c, revoked)
+	}
+	if err := run("auth", "whoami"); err == nil || !strings.Contains(err.Error(), "logged out") {
+		t.Fatalf("whoami, logged out: %v", err)
 	}
 }

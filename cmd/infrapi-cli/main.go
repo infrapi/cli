@@ -12,6 +12,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -107,15 +108,14 @@ func sanitizeContextName(server string) string {
 	return name
 }
 
-// loginCommand is this CLI's entry point — the one and only way to
-// authenticate: a browser-based OAuth2 login against --server's own
-// API. It never reads local config and never names a provider; see
-// internal/oauth2login.LoginToServer and internal/oauth2broker for
-// how the server resolves one on its own.
+// loginCommand logs in at --server's authorization server: the browser goes
+// to the provider it sends it to, and the context keeps Kayra's tokens, the
+// access token renewed before it expires (resolveContext). It never reads
+// local config and never names a provider; see internal/oauth2login.
 func loginCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "login",
-		Usage: "log in to a Kayra server via its own browser-based OAuth2 flow — never reads local config",
+		Usage: "log in to a Kayra server, through the browser: its tokens kept, renewed before they expire",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "server", Required: true, Usage: "Kayra server base URL, e.g. https://kayra.example.com"},
 			&cli.StringFlag{Name: "context-name", Usage: "name to save this login under (defaults to the sanitized --server host)"},
@@ -139,8 +139,8 @@ func runLogin(ctx context.Context, cmd *cli.Command) error {
 	timeout := cmd.Duration("timeout")
 	if noBrowser && !cmd.IsSet("timeout") {
 		// Logging in on another machine and copying a code back takes
-		// longer than a local browser round trip; 10m matches how long
-		// the server keeps the login attempt (oauth2broker.stateTTL).
+		// longer than a local browser round trip; 10m is how long Kayra
+		// keeps a login in flight.
 		timeout = 10 * time.Minute
 	}
 	loginCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -162,10 +162,11 @@ func runLogin(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	f.SetContext(name, clicontext.Context{
-		Server:    server,
-		Token:     result.AccessToken,
-		TokenType: result.TokenType,
-		Expiry:    result.Expiry,
+		Server:       server,
+		Token:        result.AccessToken,
+		RefreshToken: result.RefreshToken,
+		TokenType:    result.TokenType,
+		Expiry:       result.Expiry,
 	})
 	if err := f.Save(); err != nil {
 		return err
@@ -412,22 +413,20 @@ func runContextNamespace(ctx context.Context, cmd *cli.Command) error {
 	return nil
 }
 
+// runContextToken prints a context's access token, renewed first when it
+// is about to expire: what a script's curl sends.
 func runContextToken(ctx context.Context, cmd *cli.Command) error {
 	f, err := clicontext.Load()
 	if err != nil {
 		return err
 	}
-
-	if name := cmd.Args().First(); name != "" {
-		c, ok := f.Contexts[name]
-		if !ok {
-			return fmt.Errorf("context: no such context %q", name)
+	name := cmd.Args().First()
+	if name == "" {
+		if name, _, err = f.Current(); err != nil {
+			return err
 		}
-		fmt.Println(c.Token)
-		return nil
 	}
-
-	_, c, err := f.Current()
+	c, err := fresh(f, name)
 	if err != nil {
 		return err
 	}
@@ -435,7 +434,7 @@ func runContextToken(ctx context.Context, cmd *cli.Command) error {
 	return nil
 }
 
-// authCommand groups what is about the login itself: "login", "context"
+// authCommand groups what is about the login itself: "login", "logout", "context"
 // (the saved logins), "can-i" (an authorization decision) and "whoami"
 // (the identity that decision would be made against).
 func authCommand() *cli.Command {
@@ -444,6 +443,7 @@ func authCommand() *cli.Command {
 		Usage: "log in, keep the logins (context, ctx), and ask a server about the current one: can-i, whoami",
 		Commands: []*cli.Command{
 			loginCommand(),
+			logoutCommand(),
 			contextCommand(),
 			canICommand(),
 			whoamiCommand(),
@@ -459,15 +459,91 @@ func resolveContext(cmd *cli.Command) (clicontext.Context, error) {
 	if err != nil {
 		return clicontext.Context{}, err
 	}
-	if name := cmd.String("context"); name != "" {
-		c, ok := f.Contexts[name]
-		if !ok {
-			return clicontext.Context{}, fmt.Errorf("no such context %q", name)
+	name := cmd.String("context")
+	if name == "" {
+		if name, _, err = f.Current(); err != nil {
+			return clicontext.Context{}, err
 		}
+	}
+	return fresh(f, name)
+}
+
+// renewBefore is how long before it expires a login's access token is
+// renewed.
+const renewBefore = 30 * time.Second
+
+// fresh is context name, its access token renewed first when it expires
+// within renewBefore and the login has a refresh token: the new tokens are
+// saved. A login revoked or expired asks for a new auth login.
+func fresh(f *clicontext.File, name string) (clicontext.Context, error) {
+	c, ok := f.Contexts[name]
+	if !ok {
+		return clicontext.Context{}, fmt.Errorf("no such context %q", name)
+	}
+	if c.Token == "" {
+		return clicontext.Context{}, fmt.Errorf("context %s is logged out: run %s", name,
+			ui.Cmd("infrapi-cli auth login --server "+c.Server+" --context-name "+name))
+	}
+	if c.RefreshToken == "" || c.Expiry.IsZero() || time.Until(c.Expiry) > renewBefore {
 		return c, nil
 	}
-	_, c, err := f.Current()
-	return c, err
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	r, err := oauth2login.Refresh(ctx, c.Server, c.RefreshToken)
+	var oerr *oauth2login.Error
+	if errors.As(err, &oerr) && oerr.Code == "invalid_grant" {
+		return clicontext.Context{}, fmt.Errorf("context %s: the login is revoked or expired (%s): run %s",
+			name, oerr.Description, ui.Cmd("infrapi-cli auth login --server "+c.Server+" --context-name "+name))
+	}
+	if err != nil {
+		return clicontext.Context{}, fmt.Errorf("context %s: renew its token: %w", name, err)
+	}
+	c.Token, c.RefreshToken, c.Expiry = r.AccessToken, cmp.Or(r.RefreshToken, c.RefreshToken), r.Expiry
+	f.Contexts[name] = c
+	if err := f.Save(); err != nil {
+		return clicontext.Context{}, err
+	}
+	return c, nil
+}
+
+// logoutCommand revokes the current context's login, or --context's, and
+// forgets its tokens; the context stays, its server and namespace.
+func logoutCommand() *cli.Command {
+	return &cli.Command{
+		Name:   "logout",
+		Usage:  "revoke the current login at its server, and forget its tokens",
+		Action: runLogout,
+	}
+}
+
+func runLogout(ctx context.Context, cmd *cli.Command) error {
+	f, err := clicontext.Load()
+	if err != nil {
+		return err
+	}
+	name := cmd.String("context")
+	if name == "" {
+		if name, _, err = f.Current(); err != nil {
+			return err
+		}
+	}
+	c, ok := f.Contexts[name]
+	if !ok {
+		return fmt.Errorf("logout: no such context %q", name)
+	}
+	token := cmp.Or(c.RefreshToken, c.Token) // a refresh token revokes the whole login
+	if token != "" {
+		if err := oauth2login.Revoke(ctx, c.Server, token); err != nil {
+			return fmt.Errorf("logout: %w", err)
+		}
+	}
+	c.Token, c.RefreshToken, c.Expiry = "", "", time.Time{}
+	f.Contexts[name] = c
+	if err := f.Save(); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(ui.Stdout(), "infrapi-cli: %s %s\n", ui.OK("logged out of"), ui.Name(name))
+	return nil
 }
 
 // canICommand mirrors `kubectl auth can-i`: ask the server's own

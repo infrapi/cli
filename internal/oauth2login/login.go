@@ -1,26 +1,15 @@
-// Package oauth2login runs a real browser-based OAuth2 Authorization
-// Code + PKCE flow against a remote provider (Okta, say) — the same
-// flow `oc login` runs against OpenShift's own /oauth/authorize. Most
-// enterprise IdPs, Okta included, will never allowlist a CLI's own
-// loopback redirect_uri (http://127.0.0.1:PORT/callback) for security
-// policy reasons, so this never talks to the provider's authorization
-// endpoint directly: it opens the browser at Kayra's own
-// /oauth2/v1/authorize instead (see internal/oauth2broker, which is
-// what the provider's app registration actually allowlists), and that
-// relays the real flow back here unchanged once it completes — Kayra
-// never sees this CLI's own PKCE verifier, and the final code→token
-// exchange below still happens directly against the provider, exactly
-// as if there were no relay in between.
+// Package oauth2login is infrapi-cli's OAuth 2.1 client of Kayra's
+// authorization server: `infrapi-cli auth login` logs in (authorization code,
+// PKCE S256), each command renews the token before it expires (Refresh), and
+// `infrapi-cli auth logout` revokes it (Revoke).
 //
-// This is `infrapi-cli auth login`'s entire flow: a plain end user on their own
-// laptop who knows only a server URL, never a provider name, and never
-// reads any local config at all. The broker resolves which provider to
-// use entirely on its own (see oauth2broker.handleAuthorize) and hands
-// back that provider's own (public, non-secret) token endpoint/client_id
-// at the very end, in the loopback callback itself, just in time to
-// finish the exchange below. This is CLI-only; the API server never
-// runs this half of the flow — it only ever verifies tokens the
-// provider already issued.
+// It knows nothing but a server URL. Kayra's metadata
+// (/.well-known/oauth-authorization-server) names its endpoints; the human
+// logs in at the provider Kayra sends them to (Okta, say), never at the CLI;
+// the tokens are Kayra's own: an access token, short-lived, its aud the
+// server, and a refresh token, rotated at each use. The CLI is Kayra's
+// built-in client, infrapi-cli: a loopback redirect, any port (RFC 8252), or
+// on a host with no browser a code to paste (LoginToServerManual).
 package oauth2login
 
 import (
@@ -36,346 +25,330 @@ import (
 	"net/url"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
-	"github.com/infrapi/cli/internal/ui"
-
 	"golang.org/x/oauth2"
 
-	liberrors "github.com/infrapi/lib/pkg/errors"
+	"github.com/infrapi/cli/internal/ui"
 )
 
-// DefaultScopes is requested when a provider's
-// authentifications.<name>.remote.oauth2.scopes is empty.
-var DefaultScopes = []string{"openid", "profile", "email"}
+// ClientID is infrapi-cli's client at Kayra, built in.
+const ClientID = "infrapi-cli"
 
-// callbackPath is where the local loopback server catches the
-// provider's redirect; must match what's registered as this client's
-// redirect_uri in the provider's own OAuth2 app configuration (modulo
-// the random port, most providers allow any 127.0.0.1 port for a
-// "native"/public client redirect_uri, exactly like oc/kubectl's own
-// OIDC plugins).
+// OOBRedirectURI is LoginToServerManual's redirect URI: Kayra shows the code
+// to paste instead of redirecting.
+const OOBRedirectURI = "urn:ietf:wg:oauth:2.0:oob"
+
+// MetadataPath is Kayra's authorization server metadata (RFC 8414).
+const MetadataPath = "/.well-known/oauth-authorization-server"
+
+// callbackPath is where the loopback listener catches Kayra's redirect.
 const callbackPath = "/callback"
 
-// Result is a completed login's outcome — AccessToken is what a caller
-// uses as this request's bearer token against Kayra's own API (and
-// against the provider's userinfo endpoint, for a claims-backed
-// authorizations.<name> entry).
+// Result is a login's, or a renewal's, tokens.
 type Result struct {
-	AccessToken string
-	TokenType   string
-	Expiry      time.Time
+	AccessToken  string
+	RefreshToken string
+	TokenType    string
+	Expiry       time.Time
 }
 
-// OpenBrowser is swappable for tests — both this package's own and
-// internal/oauth2broker's integration tests, which simulate a user
-// clicking through the real confirmation/chooser page without an
-// actual display. In production it best-effort launches the user's
-// default browser; LoginToServer never depends on this succeeding —
-// stderr always also receives the URL to open by hand.
+// OpenBrowser is swappable for tests: in production it best-effort
+// launches the default browser; the URL is printed either way.
 var OpenBrowser = defaultOpenBrowser
 
-// LoginToServer is `infrapi-cli auth login`'s entire flow: a plain end user on
-// their own laptop who knows nothing but a Kayra server URL — no
-// provider name, no discovery URL, no client_id, and no local
-// kayra.yaml to read any of that from. It asks serverBaseURL's own
-// broker to pick a provider on its behalf (see
-// oauth2broker.handleAuthorize — automatic when exactly one
-// remote.oauth2 provider is configured, or a human picks from a
-// chooser page when there's more than one), and relies on the broker
-// handing back that provider's own token_endpoint/client_id — public,
-// non-secret OAuth2 client metadata, never anything Kayra would need
-// to protect — at the very end, in the loopback callback itself, so
-// the exchange below can still happen directly against the real
-// provider and the actual access token is something only this CLI
-// process ever sees. ctx bounds the whole wait for the browser round
-// trip; status lines (including the URL to open, in case the browser
-// couldn't be launched automatically) go to stderr.
-func LoginToServer(ctx context.Context, serverBaseURL string, stderr io.Writer) (*Result, error) {
-	if serverBaseURL == "" {
+// httpClient is every call to Kayra of the login: the proxy is the
+// environment's (netproxy).
+var httpClient = &http.Client{Timeout: 30 * time.Second}
+
+// metadata is Kayra's authorization server metadata, what the CLI uses of
+// it.
+type metadata struct {
+	Issuer                string   `json:"issuer"`
+	AuthorizationEndpoint string   `json:"authorization_endpoint"`
+	TokenEndpoint         string   `json:"token_endpoint"`
+	RevocationEndpoint    string   `json:"revocation_endpoint"`
+	CodeChallengeMethods  []string `json:"code_challenge_methods_supported"`
+	IssParameter          bool     `json:"authorization_response_iss_parameter_supported"`
+}
+
+// discover reads server's metadata.
+func discover(ctx context.Context, server string) (metadata, error) {
+	var m metadata
+	base := strings.TrimRight(server, "/")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+MetadataPath, nil)
+	if err != nil {
+		return m, err
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return m, fmt.Errorf("oauth2login: %s: %w", base+MetadataPath, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return m, fmt.Errorf("oauth2login: %s answered %d: is %s a Kayra with its authorization server on (oauth2.enabled)?", base+MetadataPath, resp.StatusCode, base)
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&m); err != nil {
+		return m, fmt.Errorf("oauth2login: %s: %w", base+MetadataPath, err)
+	}
+	if m.AuthorizationEndpoint == "" || m.TokenEndpoint == "" {
+		return m, fmt.Errorf("oauth2login: %s names no authorization or token endpoint", base+MetadataPath)
+	}
+	if !slices.Contains(m.CodeChallengeMethods, "S256") {
+		return m, fmt.Errorf("oauth2login: %s does not support PKCE S256", base)
+	}
+	return m, nil
+}
+
+// login is one login attempt: its state, PKCE verifier and the URL to open.
+type login struct {
+	meta     metadata
+	server   string
+	redirect string
+	state    string
+	verifier string
+	url      string
+}
+
+func start(ctx context.Context, server, redirect string) (login, error) {
+	m, err := discover(ctx, server)
+	if err != nil {
+		return login{}, err
+	}
+	l := login{meta: m, server: strings.TrimRight(server, "/"), redirect: redirect, state: random(24), verifier: oauth2.GenerateVerifier()}
+	l.url = m.AuthorizationEndpoint + "?" + url.Values{
+		"response_type":         {"code"},
+		"client_id":             {ClientID},
+		"redirect_uri":          {redirect},
+		"state":                 {l.state},
+		"code_challenge":        {oauth2.S256ChallengeFromVerifier(l.verifier)},
+		"code_challenge_method": {"S256"},
+		"resource":              {l.server},
+	}.Encode()
+	return l, nil
+}
+
+// LoginToServer logs in through the browser: a loopback listener catches
+// Kayra's redirect, its state and issuer checked, then the code is redeemed
+// with this process's own verifier. ctx bounds the wait; status lines,
+// the URL to open included, go to stderr.
+func LoginToServer(ctx context.Context, server string, stderr io.Writer) (*Result, error) {
+	if server == "" {
 		return nil, fmt.Errorf("oauth2login: server is required")
 	}
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return nil, fmt.Errorf("oauth2login: open local callback listener: %w", err)
+		return nil, fmt.Errorf("oauth2login: open the local callback listener: %w", err)
 	}
-	localRedirectURL := fmt.Sprintf("http://%s%s", listener.Addr().String(), callbackPath)
-
-	state, verifier, authURL, err := startLogin(serverBaseURL, localRedirectURL)
+	l, err := start(ctx, server, fmt.Sprintf("http://%s%s", ln.Addr(), callbackPath))
 	if err != nil {
-		_ = listener.Close()
+		_ = ln.Close()
 		return nil, err
 	}
-
-	resultCh := make(chan callbackResult, 1)
-	errCh := make(chan error, 1)
-	srv := &http.Server{Handler: callbackHandler(state, resultCh, errCh), ReadHeaderTimeout: 10 * time.Second}
-	go func() { _ = srv.Serve(listener) }()
+	codeCh, errCh := make(chan string, 1), make(chan error, 1)
+	srv := &http.Server{Handler: l.callback(codeCh, errCh), ReadHeaderTimeout: 10 * time.Second}
+	go func() { _ = srv.Serve(ln) }()
 	defer func() { _ = srv.Close() }()
 
-	_, _ = fmt.Fprintf(ui.Writer(stderr), "oauth2login: opening browser to log in:\n\n  %s\n\n", ui.URL(authURL))
-	if err := OpenBrowser(authURL); err != nil {
-		_, _ = fmt.Fprintf(ui.Writer(stderr), "oauth2login: %s (%v) — open the URL above by hand\n", ui.Warn("could not open a browser automatically"), err)
+	_, _ = fmt.Fprintf(ui.Writer(stderr), "oauth2login: opening the browser to log in:\n\n  %s\n\n", ui.URL(l.url))
+	if err := OpenBrowser(l.url); err != nil {
+		_, _ = fmt.Fprintf(ui.Writer(stderr), "oauth2login: %s (%v): open the URL above by hand\n", ui.Warn("could not open a browser"), err)
 	}
-
-	var result callbackResult
 	select {
-	case result = <-resultCh:
+	case code := <-codeCh:
+		return l.redeem(ctx, code)
 	case err := <-errCh:
 		return nil, err
 	case <-ctx.Done():
 		return nil, fmt.Errorf("oauth2login: timed out waiting for the browser login: %w", ctx.Err())
 	}
-	return exchange(ctx, serverBaseURL, result, verifier)
 }
 
-// OOBRedirectURI is the redirect_uri LoginToServerManual sends instead
-// of a loopback address — the standard OAuth2 "out-of-band" value. It
-// never reaches the provider (which always sees Kayra's own callback,
-// exactly as for a loopback login): it only tells the broker to show
-// the user a LoginCode to copy (see oauth2broker.handleCallback)
-// instead of redirecting their browser to a local listener that, on
-// another machine, wouldn't exist.
-const OOBRedirectURI = "urn:ietf:wg:oauth:2.0:oob"
-
-// LoginCode is everything a loopback callback would have carried,
-// bundled into the one string the broker shows a no-browser login's
-// user to paste back into their terminal (see EncodeLoginCode /
-// DecodeLoginCode). Safe to display: Code is only redeemable together
-// with the code_verifier, which never leaves the CLI process that
-// started the login (PKCE), and State ties it to that one login.
-type LoginCode struct {
-	Code          string `json:"code"`
-	State         string `json:"state"`
-	TokenEndpoint string `json:"token_endpoint"`
-	ClientID      string `json:"client_id"`
-}
-
-// EncodeLoginCode renders c as a single copy-pasteable token
-// (base64url JSON, no padding — no characters a terminal or a
-// copy/paste could mangle).
-func EncodeLoginCode(c LoginCode) (string, error) {
-	data, err := json.Marshal(c)
-	if err != nil {
-		return "", fmt.Errorf("oauth2login: encode login code: %w", err)
-	}
-	return base64.RawURLEncoding.EncodeToString(data), nil
-}
-
-// DecodeLoginCode is EncodeLoginCode's inverse; surrounding whitespace
-// (a trailing newline, a stray space from copying) is ignored.
-func DecodeLoginCode(s string) (LoginCode, error) {
-	var c LoginCode
-	data, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(s))
-	if err != nil {
-		return c, fmt.Errorf("oauth2login: login code is not valid — paste it exactly as shown in the browser: %w", err)
-	}
-	if err := json.Unmarshal(data, &c); err != nil {
-		return c, fmt.Errorf("oauth2login: login code is not valid — paste it exactly as shown in the browser: %w", err)
-	}
-	return c, nil
-}
-
-// LoginToServerManual is LoginToServer for a terminal with no usable
-// browser (SSH, a container, an air-gapped host): it starts no local
-// listener and opens nothing. It prints the login URL to stderr for
-// the user to open on any machine that has a browser; once they've
-// logged in, the broker shows them a LoginCode, which they paste back
-// at the prompt this reads from stdin. The final code→token exchange
-// is identical to LoginToServer's — still directly against the
-// provider, still with this process's own PKCE verifier — so this host
-// must be able to reach the provider's token endpoint. ctx bounds the
-// whole wait, including the prompt.
-func LoginToServerManual(ctx context.Context, serverBaseURL string, stdin io.Reader, stderr io.Writer) (*Result, error) {
-	if serverBaseURL == "" {
-		return nil, fmt.Errorf("oauth2login: server is required")
-	}
-
-	state, verifier, authURL, err := startLogin(serverBaseURL, OOBRedirectURI)
-	if err != nil {
-		return nil, err
-	}
-
-	_, _ = fmt.Fprintf(ui.Writer(stderr), "oauth2login: open this URL in a browser on any machine to log in:\n\n  %s\n\n", ui.URL(authURL))
-	_, _ = fmt.Fprint(ui.Writer(stderr), ui.Bold("Paste the login code shown in the browser: "))
-
-	lineCh := make(chan string, 1)
-	readErrCh := make(chan error, 1)
-	go func() {
-		line, err := bufio.NewReader(stdin).ReadString('\n')
-		if err != nil && strings.TrimSpace(line) == "" {
-			readErrCh <- fmt.Errorf("oauth2login: read login code: %w", err)
-			return
-		}
-		lineCh <- line
-	}()
-
-	var line string
-	select {
-	case line = <-lineCh:
-	case err := <-readErrCh:
-		return nil, err
-	case <-ctx.Done():
-		return nil, fmt.Errorf("oauth2login: timed out waiting for the login code: %w", ctx.Err())
-	}
-
-	code, err := DecodeLoginCode(line)
-	if err != nil {
-		return nil, err
-	}
-	if code.State != state {
-		return nil, fmt.Errorf("oauth2login: login code belongs to a different login attempt — paste the code from the URL this command printed")
-	}
-	if code.Code == "" {
-		return nil, fmt.Errorf("oauth2login: login code carries no authorization code")
-	}
-	return exchange(ctx, serverBaseURL, callbackResult{
-		Code:          code.Code,
-		TokenEndpoint: code.TokenEndpoint,
-		ClientID:      code.ClientID,
-	}, verifier)
-}
-
-// startLogin generates one login attempt's state and PKCE pair and
-// builds the broker's /oauth2/v1/authorize URL for redirectURI (a
-// loopback callback, or OOBRedirectURI).
-func startLogin(serverBaseURL, redirectURI string) (state, verifier, authURL string, err error) {
-	state, err = randomString(32)
-	if err != nil {
-		return "", "", "", err
-	}
-	verifier = oauth2.GenerateVerifier()
-	authURL = strings.TrimRight(serverBaseURL, "/") + "/oauth2/v1/authorize?" + url.Values{
-		"redirect_uri":          {redirectURI},
-		"state":                 {state},
-		"code_challenge":        {oauth2.S256ChallengeFromVerifier(verifier)},
-		"code_challenge_method": {"S256"},
-	}.Encode()
-	return state, verifier, authURL, nil
-}
-
-// exchange finishes either login flavor: redeems result.Code at the
-// provider's token endpoint the broker relayed, with this process's
-// own PKCE verifier.
-func exchange(ctx context.Context, serverBaseURL string, result callbackResult, verifier string) (*Result, error) {
-	base := strings.TrimRight(serverBaseURL, "/")
-	if result.TokenEndpoint == "" || result.ClientID == "" {
-		return nil, fmt.Errorf("oauth2login: server did not relay a token endpoint/client id at the callback — is %s running a kayra build new enough for `infrapi-cli auth login`?", base)
-	}
-
-	// No local config, so no provider-specific proxy to honor either:
-	// the default transport follows HTTPS_PROXY/NO_PROXY, exactly what a
-	// plain end-user laptop needs.
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
-
-	cfg := &oauth2.Config{
-		ClientID:    result.ClientID,
-		Endpoint:    oauth2.Endpoint{TokenURL: result.TokenEndpoint},
-		RedirectURL: base + "/oauth2/v1/callback",
-	}
-	token, err := cfg.Exchange(ctx, result.Code, oauth2.VerifierOption(verifier))
-	if err != nil {
-		return nil, fmt.Errorf("oauth2login: exchange code for token: %w", err)
-	}
-
-	return &Result{AccessToken: token.AccessToken, TokenType: token.TokenType, Expiry: token.Expiry}, nil
-}
-
-// callbackResult is what the loopback listener below hands back once
-// the broker's relayed redirect lands on it: the authorization code,
-// plus the public token_endpoint/client_id the broker resolved
-// alongside it — everything LoginToServer needs to finish the PKCE
-// exchange itself, having started with none of it.
-type callbackResult struct {
-	Code          string
-	TokenEndpoint string
-	ClientID      string
-}
-
-// callbackHandler answers the provider's (broker-relayed) redirect: a
-// matching state and a code sends the full callbackResult on
-// resultCh; a provider-reported error (or a state mismatch) sends an
-// error on errCh instead. Either way, the browser gets a short
-// human-readable page — there is nothing left for it to do once this
-// fires.
-func callbackHandler(wantState string, resultCh chan<- callbackResult, errCh chan<- error) http.Handler {
-	const origin = "oauth2login.Callback"
+// callback answers Kayra's redirect: its state this login's, its issuer
+// the server's (RFC 9207), then its code; an error, or a mismatch, ends
+// the login.
+func (l login) callback(codeCh chan<- string, errCh chan<- error) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc(callbackPath, func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-
-		if errParam := q.Get("error"); errParam != "" {
-			lerr := liberrors.New(http.StatusBadRequest, origin, "login provider denied login: %s: %s", errParam, q.Get("error_description"))
-			fail(w, lerr)
-			errCh <- fmt.Errorf("oauth2login: %s", lerr.Message)
-			return
+		fail := func(msg string) {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprintf(w, "Login failed: %s\nCheck the terminal, and run infrapi-cli auth login again.\n", msg)
+			errCh <- fmt.Errorf("oauth2login: %s", msg)
 		}
-		if q.Get("state") != wantState {
-			lerr := liberrors.New(http.StatusBadRequest, origin, "callback state mismatch (possible CSRF)")
-			fail(w, lerr)
-			errCh <- fmt.Errorf("oauth2login: %s", lerr.Message)
-			return
+		switch {
+		case q.Get("state") != l.state:
+			fail("the callback's state is not this login's")
+		case (l.meta.IssParameter || q.Get("iss") != "") && q.Get("iss") != l.meta.Issuer:
+			// a mismatch: nothing else in the response is trusted, its error included
+			fail(fmt.Sprintf("the callback's issuer %q is not %q", q.Get("iss"), l.meta.Issuer))
+		case q.Get("error") != "":
+			fail(q.Get("error") + ": " + q.Get("error_description"))
+		case q.Get("code") == "":
+			fail("the callback carries no code")
+		default:
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = fmt.Fprint(w, "<html><body><p>Logged in: you can close this tab.</p></body></html>")
+			codeCh <- q.Get("code")
 		}
-		code := q.Get("code")
-		if code == "" {
-			lerr := liberrors.New(http.StatusBadRequest, origin, "callback carried no code")
-			fail(w, lerr)
-			errCh <- fmt.Errorf("oauth2login: %s", lerr.Message)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = fmt.Fprint(w, "<html><body><p>Login complete — you can close this tab.</p></body></html>")
-		resultCh <- callbackResult{Code: code, TokenEndpoint: q.Get("token_endpoint"), ClientID: q.Get("client_id")}
 	})
 	return mux
 }
 
-// fail answers the browser with err as problem+json (the same shape as
-// every Kayra API error); the terminal gets err's plain detail via errCh
-// instead, never liberrors' operator-facing Error() form.
-func fail(w http.ResponseWriter, err *liberrors.Error) {
-	err = err.WithSolution("check the terminal and run `infrapi-cli auth login` again")
-	body, merr := err.MarshalJSON()
-	if merr != nil {
-		body = []byte(`{"detail":"` + err.Message + `"}`)
+// LoginToServerManual logs in on a host with no browser (SSH, a container):
+// it prints the URL to open on any machine, where Kayra shows a code once
+// the human has logged in, and reads that code from stdin. The code redeems
+// with this process's verifier alone.
+func LoginToServerManual(ctx context.Context, server string, stdin io.Reader, stderr io.Writer) (*Result, error) {
+	if server == "" {
+		return nil, fmt.Errorf("oauth2login: server is required")
 	}
-	w.Header().Set("Content-Type", liberrors.MediaType)
-	w.WriteHeader(err.Code)
-	_, _ = w.Write(body)
+	l, err := start(ctx, server, OOBRedirectURI)
+	if err != nil {
+		return nil, err
+	}
+	_, _ = fmt.Fprintf(ui.Writer(stderr), "oauth2login: open this URL in a browser on any machine to log in:\n\n  %s\n\n", ui.URL(l.url))
+	_, _ = fmt.Fprint(ui.Writer(stderr), ui.Bold("Paste the code shown in the browser: "))
+	lineCh, errCh := make(chan string, 1), make(chan error, 1)
+	go func() {
+		line, err := bufio.NewReader(stdin).ReadString('\n')
+		if err != nil && strings.TrimSpace(line) == "" {
+			errCh <- fmt.Errorf("oauth2login: read the code: %w", err)
+			return
+		}
+		lineCh <- strings.TrimSpace(line)
+	}()
+	select {
+	case code := <-lineCh:
+		if code == "" {
+			return nil, fmt.Errorf("oauth2login: no code pasted")
+		}
+		return l.redeem(ctx, code)
+	case err := <-errCh:
+		return nil, err
+	case <-ctx.Done():
+		return nil, fmt.Errorf("oauth2login: timed out waiting for the code: %w", ctx.Err())
+	}
 }
 
-// httpClient is every outbound call of the login: the token exchange.
-var httpClient = &http.Client{Timeout: 10 * time.Second}
+func (l login) redeem(ctx context.Context, code string) (*Result, error) {
+	return post(ctx, l.meta.TokenEndpoint, url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"redirect_uri":  {l.redirect},
+		"client_id":     {ClientID},
+		"code_verifier": {l.verifier},
+		"resource":      {l.server},
+	})
+}
 
-func randomString(n int) (string, error) {
+// Refresh renews a login's tokens: a new access token, and a new refresh
+// token, the one given used up.
+func Refresh(ctx context.Context, server, refreshToken string) (*Result, error) {
+	m, err := discover(ctx, server)
+	if err != nil {
+		return nil, err
+	}
+	return post(ctx, m.TokenEndpoint, url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+		"client_id":     {ClientID},
+		"resource":      {strings.TrimRight(server, "/")},
+	})
+}
+
+// Revoke revokes a token at Kayra: a refresh token, its whole login.
+func Revoke(ctx context.Context, server, token string) error {
+	m, err := discover(ctx, server)
+	if err != nil {
+		return err
+	}
+	if m.RevocationEndpoint == "" {
+		return fmt.Errorf("oauth2login: %s names no revocation endpoint", server)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.RevocationEndpoint,
+		strings.NewReader(url.Values{"token": {token}, "client_id": {ClientID}}.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("oauth2login: revoke: %w", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("oauth2login: revoke answered %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// post is a token request: its answer, or its OAuth error.
+func post(ctx context.Context, endpoint string, form url.Values) (*Result, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("oauth2login: %s: %w", endpoint, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var out struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		TokenType    string `json:"token_type"`
+		ExpiresIn    int    `json:"expires_in"`
+		Error        string `json:"error"`
+		Description  string `json:"error_description"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
+		return nil, fmt.Errorf("oauth2login: %s answered %d: %w", endpoint, resp.StatusCode, err)
+	}
+	if resp.StatusCode != http.StatusOK || out.AccessToken == "" {
+		return nil, &Error{Code: out.Error, Description: out.Description, Status: resp.StatusCode}
+	}
+	r := &Result{AccessToken: out.AccessToken, RefreshToken: out.RefreshToken, TokenType: out.TokenType}
+	if out.ExpiresIn > 0 {
+		r.Expiry = time.Now().Add(time.Duration(out.ExpiresIn) * time.Second)
+	}
+	return r, nil
+}
+
+// Error is the token endpoint's OAuth error: invalid_grant when a refresh
+// token is no longer good, its login revoked or expired.
+type Error struct {
+	Code, Description string
+	Status            int
+}
+
+func (e *Error) Error() string {
+	return fmt.Sprintf("oauth2login: %s (%d): %s", e.Code, e.Status, e.Description)
+}
+
+func random(n int) string {
 	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("oauth2login: generate random state: %w", err)
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
+	_, _ = rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// defaultOpenBrowser best-effort launches the OS's default browser —
-// LoginToServer never depends on this succeeding (stderr always also
-// prints the URL), since many CLI sessions (SSH, containers) have no
-// browser to open at all.
-func defaultOpenBrowser(url string) error {
+// defaultOpenBrowser best-effort launches the OS's default browser.
+func defaultOpenBrowser(u string) error {
 	var cmd string
 	var args []string
-
 	switch runtime.GOOS {
 	case "darwin":
-		cmd, args = "open", []string{url}
+		cmd, args = "open", []string{u}
 	case "windows":
-		cmd, args = "rundll32", []string{"url.dll,FileProtocolHandler", url}
+		cmd, args = "rundll32", []string{"url.dll,FileProtocolHandler", u}
 	default:
-		cmd, args = "xdg-open", []string{url}
+		cmd, args = "xdg-open", []string{u}
 	}
-	// cmd is always one of the three hardcoded literals above, picked by
-	// runtime.GOOS alone — never attacker-influenced — and url is passed
-	// as a single argv entry, never through a shell, so there is nothing
-	// here for shell metacharacters to reach.
+	// cmd is one of the three literals above, picked by runtime.GOOS
+	// alone, and u is one argv entry, never through a shell
 	return exec.Command(cmd, args...).Start() //#nosec G204
 }

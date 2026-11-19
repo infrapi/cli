@@ -7,7 +7,7 @@
 #
 #   routes.sh <dir>
 #
-#   kayra          /apis, /oauth2/*, /.well-known/{kayra,api}.json, Kayra's own groups  Kayra
+#   kayra          /apis, /oauth2/*, /.well-known/{kayra,api}.json, oauth-authorization-server, Kayra's own groups  Kayra
 #   openapi-stub   GET /apis/<api>/<version>/-/openapi.json   an OpenAPI document for any other api
 #   hooks          /hooks/*                         the dev reconcile pipeline, always {"status":"done"}
 #   healthz        GET /healthz                     {"status":"ok"}

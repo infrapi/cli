@@ -23,12 +23,15 @@ import (
 // server's API domain is not saved: commands discover it from the
 // server's /.well-known/kayra.json.
 type Context struct {
-	Server    string    `yaml:"server"`
-	Provider  string    `yaml:"provider,omitempty"`
-	Username  string    `yaml:"username,omitempty"`
-	Token     string    `yaml:"token"`
-	TokenType string    `yaml:"token_type,omitempty"`
-	Expiry    time.Time `yaml:"expiry,omitempty"`
+	Server   string `yaml:"server"`
+	Provider string `yaml:"provider,omitempty"`
+	Username string `yaml:"username,omitempty"`
+	Token    string `yaml:"token"`
+	// RefreshToken renews Token before it expires (Expiry): a login's at
+	// Kayra's authorization server; none for a token saved by hand.
+	RefreshToken string    `yaml:"refresh_token,omitempty"`
+	TokenType    string    `yaml:"token_type,omitempty"`
+	Expiry       time.Time `yaml:"expiry,omitempty"`
 	// Namespace is the namespace a namespaced resource is addressed in
 	// when a command names none (-n), like kubens: set with `auth
 	// context namespace`, kept across logins.

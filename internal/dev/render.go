@@ -544,7 +544,7 @@ func gatewayRoutes(c *Config) ([]route, error) {
 	return []route{
 		{"kayra", map[string]any{
 			"uris": []string{
-				"/apis", "/oauth2/*", "/.well-known/kayra.json", "/.well-known/api.json",
+				"/apis", "/oauth2/*", "/.well-known/kayra.json", "/.well-known/api.json", "/.well-known/oauth-authorization-server",
 				"/apis/" + c.Builtin("system") + "/*",
 				"/apis/" + c.Builtin("catalog") + "/*",
 				"/apis/" + c.Builtin("authorization") + "/*",
