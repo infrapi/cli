@@ -44,5 +44,5 @@ A resource's operations answer 501 Not Implemented until written: see
 ## Release
 
 A pushed tag `v<x.y.z>` releases it: the CI runs GoReleaser
-(`.goreleaser.yaml`)[[ if or .Archives .Deb .RPM .Docker ]], which builds[[ if .Archives ]] the archives[[ end ]][[ if or .Deb .RPM ]][[ if .Archives ]],[[ end ]] the[[ if .Deb ]] deb[[ end ]][[ if and .Deb .RPM ]] and[[ end ]][[ if .RPM ]] rpm[[ end ]] packages[[ end ]][[ if .Docker ]][[ if or .Archives .Deb .RPM ]] and[[ end ]] the image, [[ .Image ]][[ end ]][[ end ]].
+(`.goreleaser.yaml`)[[ if or .Archives .Deb .RPM .Docker ]], which builds[[ if .Archives ]] the archives[[ end ]][[ if or .Deb .RPM ]][[ if .Archives ]],[[ end ]] the[[ if .Deb ]] deb[[ end ]][[ if and .Deb .RPM ]] and[[ end ]][[ if .RPM ]] rpm[[ end ]] packages[[ end ]][[ if .Docker ]][[ if or .Archives .Deb .RPM ]] and[[ end ]] the image, [[ .ImageName ]][[ end ]][[ end ]].
 `make snapshot` builds the same locally, unpublished.

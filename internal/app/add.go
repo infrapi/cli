@@ -356,7 +356,7 @@ func find(m *yaml.Node, k string) int {
 // zero is the zero value of a Go type, as an expression.
 func zero(t string) string {
 	switch {
-	case t == "", strings.HasPrefix(t, "[]"), strings.HasPrefix(t, "map["), strings.HasPrefix(t, "*"), t == "any":
+	case t == "", strings.HasPrefix(t, "[]"), strings.HasPrefix(t, "map["), strings.HasPrefix(t, "*"), t == "any", t == "io.ReadCloser":
 		return "nil"
 	case t == "string":
 		return `""`

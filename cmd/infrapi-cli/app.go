@@ -227,6 +227,6 @@ func runAppRegister(ctx context.Context, cmd *cli.Command) error {
 	}
 	_, _ = fmt.Fprintf(out, "kayra: %s %s, its spec read again, on %s\n", ui.Name(info.Group), ui.OK("registered"), ui.URL(c.Server))
 	_, _ = fmt.Fprintf(out, "  %s: subscribe a namespace, %s\n", ui.Bold("next"),
-		ui.Cmd(fmt.Sprintf(`infrapi-cli create catalog -n <namespace> subscriptions -d '{"api": "%s"}'`, info.Group)))
+		ui.Cmd(fmt.Sprintf(`infrapi-cli create subscriptions -n <namespace> -d '{"api": "%s"}'`, info.Group)))
 	return nil
 }

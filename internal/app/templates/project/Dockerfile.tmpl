@@ -3,7 +3,7 @@
 # from the binary it has just built, for each platform. Its settings: a
 # dotenv file mounted at /etc/[[ .Name ]]/[[ .Name ]].env.
 #
-#   podman run -v ./app.env:/etc/[[ .Name ]]/[[ .Name ]].env:ro,z -p 8080:8080 [[ .Image ]]
+#   podman run -v ./app.env:/etc/[[ .Name ]]/[[ .Name ]].env:ro,z -p 8080:8080 [[ .ImageName ]]
 FROM docker.io/library/alpine:3.22
 
 # ca-certificates: Kayra and anything else over TLS

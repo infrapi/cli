@@ -325,7 +325,8 @@ func fingerprint(key []byte) string {
 }
 
 // stackFiles adds the stack's own files to files, as templates/stack has
-// them, dev.yaml's gateway.config merged into apisix/config.yaml.
+// them, dev.yaml's gateway.config merged into apisix/config.yaml, and its
+// compose.config into compose.yaml.
 func stackFiles(c *Config, files map[string][]byte) error {
 	return fs.WalkDir(templates, "templates/stack", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -339,6 +340,11 @@ func stackFiles(c *Config, files map[string][]byte) error {
 		if rel == filepath.Join("apisix", "config.yaml") {
 			if data, err = mergeYAML(data, &c.Gateway.Config); err != nil {
 				return fmt.Errorf("apisix/config.yaml: %w", err)
+			}
+		}
+		if rel == "compose.yaml" && c.Compose.Config.Kind == yaml.MappingNode {
+			if data, err = mergeYAML(data, &c.Compose.Config); err != nil {
+				return fmt.Errorf("compose.yaml: %w", err)
 			}
 		}
 		files[rel] = data

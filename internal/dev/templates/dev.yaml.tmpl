@@ -48,12 +48,18 @@ kayra:
 #       plugins: {mocking: {response_example: '{"status":"failed"}'}}
 #     httpbin: null
 
-# Added to, or replacing in, .infrapi-dev/env, the variables compose reads.
-# A compose.override.yaml beside this file is read after
-# .infrapi-dev/compose.yaml, its paths relative to .infrapi-dev/.
+# Added to, or replacing in, .infrapi-dev/env, the variables compose
+# reads; and merged into .infrapi-dev/compose.yaml, config: a service of
+# your API's own, on the stack's network. A compose.override.yaml beside
+# this file is read after it, its paths relative to .infrapi-dev/.
 # compose:
 #   env:
 #     MY_VAR: value
+#   config:
+#     services:
+#       mock:
+#         image: docker.io/mockserver/mockserver
+#         networks: [infrapi]
 
 # Where the stack listens, on 127.0.0.1.
 ports:

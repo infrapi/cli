@@ -165,7 +165,8 @@ removing the key.
 | `app.env` | `app.env`, variables replaced or added |
 | `env` | `compose.env`, variables replaced or added, for compose to read (`${MY_VAR}`) |
 | `apisix/config.yaml` | `gateway.config`, merged into APISIX's configuration. Keep its admin key: infrapi-cli calls the Admin API with it |
-| `compose.yaml`, `compose.docker.yaml` | none: a `compose.override.yaml` beside `dev.yaml` is read after them, a service of your own or a volume say |
+| `compose.yaml` | `compose.config`, merged into it: a service of your own, or a stack's service changed |
+| `compose.docker.yaml` | none: a `compose.override.yaml` beside `dev.yaml` is read after it |
 | `apisix/routes.sh`, `kayra/Dockerfile` | none: infrapi-cli's own; mount a script of your own from `compose.override.yaml` |
 | `keys/*.pem` | `kayra.keys.self`, `kayra.keys.local`: key files of your own, relative to `dev.yaml` |
 | `users.yaml` | `users` |
@@ -201,7 +202,23 @@ too, when `gateway-init` runs, or by `infrapi-cli dev routes`. A route
 only taken out of `dev.yaml` stays in the gateway until
 `infrapi-cli dev clean`: set it to `null` instead.
 
-`compose.override.yaml`, beside `dev.yaml`, is yours: infrapi-cli adds it
+`compose.config` adds a service your API needs to the stack, Vault say,
+from `dev.yaml` itself: merged into `.infrapi-dev/compose.yaml`, maps key
+by key, `null` removing a key, as `kayra.config` is into `kayra.yaml`.
+
+```yaml
+# dev.yaml
+compose:
+  config:
+    services:
+      vault:
+        image: docker.io/hashicorp/vault:1.18
+        command: [server, -dev, -dev-root-token-id=root, -dev-listen-address=0.0.0.0:8200]
+        ports: ["127.0.0.1:8200:8200"]
+        networks: [infrapi]
+```
+
+`compose.override.yaml`, beside `dev.yaml`, is yours too: infrapi-cli adds it
 to compose's files, after `.infrapi-dev/compose.yaml`. Compose's project
 directory is `.infrapi-dev/`, so its relative paths are from there:
 `../my-script.sh` for a file beside `dev.yaml`.

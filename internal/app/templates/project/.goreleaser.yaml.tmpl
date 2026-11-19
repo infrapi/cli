@@ -61,7 +61,7 @@ dockers_v2:
     ids: ["[[ .Name ]]"]
     dockerfile: Dockerfile
     images:
-      - [[ .Image ]]
+      - "[[ .Image ]]"
     tags:
       - "{{ .Version }}"
       - "{{ if not .Prerelease }}{{ .Major }}.{{ .Minor }}{{ end }}"

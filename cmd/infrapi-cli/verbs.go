@@ -1,21 +1,14 @@
 // Top-level kubectl-style verbs — get, create, update, patch, delete
-// — each a thin, generic REST client against any app's own namespaced
-// API, following the exact URN/route convention Kayra's own
-// namespace-scoped resources use (see RegisterNamespaceRoutes). `get`
-// with no trailing <name> lists the whole collection, exactly like
-// `kubectl get` does — there is no separate `list` verb.
+// — each a thin, generic REST client against any app's API, following the
+// route convention every app on infrapi/lib shares. `get` with no
+// trailing <name> lists the whole collection, exactly like `kubectl get`
+// does — there is no separate `list` verb.
 //
-//	{server}/apis/<api>.<domain>/v1/namespaces/<namespace>/<resource>[/<name>]
+//	{server}/apis/<api>/<version>[/namespaces/<namespace>]/<resource>[/<name>]
 //
-// authenticated with the current context's own bearer token. Kayra
-// itself never implements any of these APIs (see catalog.ApiRegistration
-// — Kayra only tracks that one exists and who owns it); this is just
-// the one HTTP convention every app following it shares, so one verb
-// set works against all of them without infrapi-cli knowing anything
-// about any particular one. <api> is a group's full name
-// ("compute.infrapi.io"), or its short name or first label ("compute"),
-// resolved through the server's GET /apis — see resolveAPI, shared with
-// `auth can-i`.
+// authenticated with the current context's own bearer token. <resource>
+// is named as kubectl names one, "vms" or "vms.compute.infrapi.io" (see
+// resolveResource): discovery gives its api group, version and scope.
 package main
 
 import (
@@ -70,16 +63,16 @@ func verbCommands() []*cli.Command {
 }
 
 func verbCommand(verb, method string, spec verbSpec) *cli.Command {
-	argsUsage := "<api> <resource>"
+	argsUsage := "<resource>"
 	switch spec.name {
 	case nameOptional:
-		argsUsage = "<api> <resource> [<name>]"
+		argsUsage = "<resource> [<name>]"
 	case nameRequired:
-		argsUsage = "<api> <resource> <name>"
+		argsUsage = "<resource> <name>"
 	}
 	usage := fmt.Sprintf("%s a resource under any app's own API (kubectl-style)", verb)
 	flags := []cli.Flag{
-		&cli.StringFlag{Name: "namespace", Aliases: []string{"n"}, Usage: "the namespace to address — omit for a cluster-scoped resource (e.g. catalog's apiregistrations, authorization's clustergroups/clusterroles/clusterrolebindings)"},
+		&cli.StringFlag{Name: "namespace", Aliases: []string{"n"}, Usage: "the namespace of a namespaced resource (default: the context's, see `auth context namespace`); a cluster-scoped one has none"},
 		&cli.StringFlag{Name: "output", Aliases: []string{"o"}, Value: outputTable, Usage: "output format: table (namespace, name, created/updated at), or json / yaml (the full response)"},
 	}
 	if spec.requireBody {
@@ -102,12 +95,12 @@ func verbCommand(verb, method string, spec verbSpec) *cli.Command {
 
 func runVerb(ctx context.Context, cmd *cli.Command, verb, method string, spec verbSpec) error {
 	args := cmd.Args()
-	minArgs, maxArgs := 2, 2
+	minArgs, maxArgs := 1, 1
 	if spec.name == nameOptional {
-		maxArgs = 3
+		maxArgs = 2
 	}
 	if spec.name == nameRequired {
-		minArgs, maxArgs = 3, 3
+		minArgs, maxArgs = 2, 2
 	}
 	if args.Len() < minArgs || args.Len() > maxArgs {
 		nameUsage := ""
@@ -117,12 +110,12 @@ func runVerb(ctx context.Context, cmd *cli.Command, verb, method string, spec ve
 		case nameRequired:
 			nameUsage = " <name>"
 		}
-		return fmt.Errorf("%s: usage: infrapi-cli %s <api> <resource>%s [-n <namespace>]", verb, verb, nameUsage)
+		return fmt.Errorf("%s: usage: infrapi-cli %s <resource>[.<api group>]%s [-n <namespace>]", verb, verb, nameUsage)
 	}
-	apiName, resource := args.Get(0), args.Get(1)
+	typed := args.Get(0)
 	var name string
-	if args.Len() == 3 {
-		name = args.Get(2)
+	if args.Len() == 2 {
+		name = args.Get(1)
 	}
 
 	output := cmd.String("output")
@@ -148,25 +141,19 @@ func runVerb(ctx context.Context, cmd *cli.Command, verb, method string, spec ve
 		}
 	}
 
-	fullAPI, err := resolveAPI(ctx, c, apiName)
+	ref, err := resolveResource(ctx, c, typed)
+	if err != nil {
+		warnAmbiguous(err)
+		return fmt.Errorf("%s: %w", verb, err)
+	}
+	namespace, err := namespaceFor(ref, cmd.String("namespace"), c)
 	if err != nil {
 		return fmt.Errorf("%s: %w", verb, err)
 	}
-
-	// A namespace scopes the resource under .../namespaces/<ns>/<resource>
-	// (subscriptions, per-namespace groups/roles/rolebindings, ...);
-	// omitted, <resource> is cluster-scoped and addressed directly —
-	// .../<resource> (apiregistrations, clustergroups/clusterroles/
-	// clusterrolebindings, ...). Kayra itself mounts both shapes under
-	// the same api group, never both for the same resource name, so
-	// there is nothing to disambiguate beyond what the caller already
-	// knows about the resource they're naming.
-	namespace := cmd.String("namespace")
-	var path string
+	resource := ref.Resource
+	path := fmt.Sprintf("/apis/%s/%s/%s", ref.Api, ref.Version, resource)
 	if namespace != "" {
-		path = fmt.Sprintf("/apis/%s/v1/namespaces/%s/%s", fullAPI, namespace, resource)
-	} else {
-		path = fmt.Sprintf("/apis/%s/v1/%s", fullAPI, resource)
+		path = fmt.Sprintf("/apis/%s/%s/namespaces/%s/%s", ref.Api, ref.Version, namespace, resource)
 	}
 	if name != "" {
 		path += "/" + name

@@ -29,6 +29,10 @@ type Context struct {
 	Token     string    `yaml:"token"`
 	TokenType string    `yaml:"token_type,omitempty"`
 	Expiry    time.Time `yaml:"expiry,omitempty"`
+	// Namespace is the namespace a namespaced resource is addressed in
+	// when a command names none (-n), like kubens: set with `auth
+	// context namespace`, kept across logins.
+	Namespace string `yaml:"namespace,omitempty"`
 }
 
 // File is the on-disk ~/.config/infrapi/config.
@@ -120,9 +124,15 @@ func (f *File) SaveTo(path string) error {
 // SetContext upserts name and switches CurrentContext to it — a
 // login always activates the context it just produced, the same way
 // `oc login`/`kubectl config set-context --current` behaves.
+//
+// A context saved again keeps its namespace when ctx names none: a new
+// login does not forget where its user works.
 func (f *File) SetContext(name string, ctx Context) {
 	if f.Contexts == nil {
 		f.Contexts = map[string]Context{}
+	}
+	if ctx.Namespace == "" {
+		ctx.Namespace = f.Contexts[name].Namespace
 	}
 	f.Contexts[name] = ctx
 	f.CurrentContext = name
@@ -173,4 +183,15 @@ func (f *File) Names() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// SetNamespace makes ns context name's namespace, "" none.
+func (f *File) SetNamespace(name, ns string) error {
+	c, ok := f.Contexts[name]
+	if !ok {
+		return fmt.Errorf("clicontext: no such context %q", name)
+	}
+	c.Namespace = ns
+	f.Contexts[name] = c
+	return nil
 }

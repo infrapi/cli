@@ -214,7 +214,7 @@ is no dev stack, its route set by whoever runs the gateway:
 
 ```bash
 infrapi-cli dev api add       # the route: /apis/compute.infrapi.io/* -> your API, dev.yaml's app.port
-infrapi-cli create catalog apiregistrations \
+infrapi-cli create apiregistrations \
   -d '{"name": "compute.infrapi.io", "short_name": "compute", "version": "v1", "active": true, "owner": "dev"}'
 ```
 
@@ -234,15 +234,15 @@ its admins manage its subscriptions and its own RBAC.
 **infrapi-cli**
 
 ```bash
-infrapi-cli create system namespaces -d '{"name": "thetenant"}'
+infrapi-cli create namespaces -d '{"name": "thetenant"}'
 
-infrapi-cli create authorization clustergroups \
+infrapi-cli create clustergroups \
   -d "{\"name\": \"thetenant-admins\", $META, \"groups\": [\"sandbox-core-sysadmin\", \"sandbox-thetenant-admins\"]}"
 
-infrapi-cli create authorization clusterroles \
+infrapi-cli create clusterroles \
   -d "{\"name\": \"thetenant-admin-role\", $META, \"rules\": [{\"apis\": [\"catalog.infrapi.io\", \"authorization.infrapi.io\"], \"resources\": [\"*\"], \"verbs\": [\"*\"]}]}"
 
-infrapi-cli create authorization clusterrolebindings \
+infrapi-cli create clusterrolebindings \
   -d "{\"name\": \"thetenant-admin-binding\", $META, \"role\": \"thetenant-admin-role\", \"groups\": [\"thetenant-admins\"]}"
 ```
 
@@ -272,10 +272,10 @@ the subscription.
 **infrapi-cli**
 
 ```bash
-infrapi-cli create catalog -n thetenant subscriptions -d '{"api": "compute.infrapi.io"}'
+infrapi-cli create subscriptions -n thetenant -d '{"api": "compute.infrapi.io"}'
 
 # a few seconds later
-infrapi-cli get catalog -n thetenant subscriptions compute.infrapi.io -o json
+infrapi-cli get subscriptions -n thetenant compute.infrapi.io -o json
 # {"api": "compute.infrapi.io", "active": true, "state": "success", "synced": true, …}
 ```
 
@@ -307,7 +307,7 @@ catalog: reconciler: … activated subscription thetenant/compute.infrapi.io
 **infrapi-cli**
 
 ```bash
-infrapi-cli get compute -n thetenant vms --context dev-jdoe
+infrapi-cli get vms -n thetenant --context dev-jdoe
 # Error: Forbidden (403): you are not a member of namespace "thetenant": neither your user id nor any of your groups is listed in any of its groups
 ```
 
@@ -325,16 +325,16 @@ two.
 **infrapi-cli**
 
 ```bash
-infrapi-cli create authorization -n thetenant groups \
+infrapi-cli create groups -n thetenant \
   -d "{\"name\": \"devs\", $META, \"groups\": [\"sandbox-thetenant-admins\"]}"
 
-infrapi-cli create authorization -n thetenant roles \
+infrapi-cli create roles -n thetenant \
   -d "{\"name\": \"vms-admin\", $META, \"rules\": [{\"apis\": [\"compute.infrapi.io\"], \"resources\": [\"vms\"], \"verbs\": [\"*\"]}]}"
 
-infrapi-cli create authorization -n thetenant rolebindings \
+infrapi-cli create rolebindings -n thetenant \
   -d "{\"name\": \"devs-vms-admin\", $META, \"role\": \"vms-admin\", \"groups\": [\"devs\"]}"
 
-infrapi-cli auth can-i create vms --api compute.infrapi.io --namespace thetenant --context dev-jdoe
+infrapi-cli auth can-i create vms --namespace thetenant --context dev-jdoe
 # yes
 ```
 
@@ -368,13 +368,13 @@ the contract, authorized by Kayra, and answers 501: none is written yet.
 **infrapi-cli**
 
 ```bash
-infrapi-cli create compute -n thetenant vms -d '{"name": "web-1", "cpus": 2}' --context dev-jdoe
+infrapi-cli create vms -n thetenant -d '{"name": "web-1", "cpus": 2}' --context dev-jdoe
 # Error: Not Implemented (501): CreateVM is not implemented yet
 
-infrapi-cli create compute -n thetenant vms -d '{"name": "web-1", "cpus": 100}' --context dev-jdoe
+infrapi-cli create vms -n thetenant -d '{"name": "web-1", "cpus": 100}' --context dev-jdoe
 # Error: Invalid request (400): request body has an error: doesn't match schema #/components/schemas/VM: Error at "/cpus": number must be at most 64
 
-infrapi-cli get compute -n thetenant vms --context dev-nobody
+infrapi-cli get vms -n thetenant --context dev-nobody
 # Error: Forbidden (403): you are not a member of namespace "thetenant": …
 ```
 
@@ -452,17 +452,17 @@ two written ones to `http.StatusOK` and `http.StatusCreated`, then
 **infrapi-cli**
 
 ```bash
-infrapi-cli create compute -n thetenant vms -d '{"name": "web-1", "cpus": 2, "size": "small"}' --context dev-jdoe
+infrapi-cli create vms -n thetenant -d '{"name": "web-1", "cpus": 2, "size": "small"}' --context dev-jdoe
 # NAMESPACE  NAME   CREATED AT                 UPDATED AT
 # thetenant  web-1  2026-11-17T20:57:14+01:00  -
 
-infrapi-cli get compute -n thetenant vms -o json --context dev-jdoe
+infrapi-cli get vms -n thetenant -o json --context dev-jdoe
 # [{"name": "web-1", "created_at": "2026-11-17T19:57:14Z", "cpus": 2, "size": "small"}]
 
-infrapi-cli create compute -n thetenant vms -d '{"name": "web-1"}' --context dev-jdoe
+infrapi-cli create vms -n thetenant -d '{"name": "web-1"}' --context dev-jdoe
 # Error: Already exists (409): vm "web-1" already exists in namespace "thetenant"
 
-infrapi-cli get compute -n thetenant vms web-1 --context dev-jdoe
+infrapi-cli get vms -n thetenant web-1 --context dev-jdoe
 # Error: Not Implemented (501): GetVM is not implemented yet
 ```
 

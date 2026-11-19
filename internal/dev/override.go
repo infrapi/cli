@@ -241,10 +241,13 @@ func keep(was, now map[string][]byte) map[string]any {
 	for _, name := range names {
 		old, cur := was[name], now[name]
 		switch {
-		case name == "kayra.yaml" || name == "apisix/config.yaml":
+		case name == "kayra.yaml" || name == "apisix/config.yaml" || name == "compose.yaml":
 			key := []string{"kayra", "config"}
-			if name == "apisix/config.yaml" {
+			switch name {
+			case "apisix/config.yaml":
 				key = []string{"gateway", "config"}
+			case "compose.yaml":
+				key = []string{"compose", "config"}
 			}
 			var o, n any
 			if yaml.Unmarshal(old, &o) != nil || yaml.Unmarshal(cur, &n) != nil {

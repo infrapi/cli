@@ -57,6 +57,9 @@ func Generate(root string) (Generated, error) {
 		}
 		ops = append(ops, cops...)
 	}
+	if err := routable(ops); err != nil {
+		return g, err
+	}
 	g.Ops = ops
 	handlers := handlersFile(g.Name, module+"/api", ops)
 
@@ -268,10 +271,14 @@ func handlersFile(name, apiImport string, ops []op) []byte {
 			fmt.Fprintf(&b, "\t\tif err := %s; err != nil {\n\t\t\tserver.AbortError(c, err)\n\t\t\treturn\n\t\t}\n\t\tc.Status(%s)\n", call, statusConst(o.Status))
 		} else {
 			fmt.Fprintf(&b, "\t\tout, err := %s\n\t\tif err != nil {\n\t\t\tserver.AbortError(c, err)\n\t\t\treturn\n\t\t}\n", call)
-			if strings.HasPrefix(o.Result, "[]") {
-				fmt.Fprintf(&b, "\t\tif out == nil {\n\t\t\tout = %s{}\n\t\t}\n", o.Result)
+			switch {
+			case o.Stream != "":
+				fmt.Fprintf(&b, "\t\tdefer func() { _ = out.Close() }()\n\t\tc.DataFromReader(%s, -1, %q, out, nil)\n", statusConst(o.Status), o.Stream)
+			case strings.HasPrefix(o.Result, "[]"):
+				fmt.Fprintf(&b, "\t\tif out == nil {\n\t\t\tout = %s{}\n\t\t}\n\t\tc.JSON(%s, out)\n", o.Result, statusConst(o.Status))
+			default:
+				fmt.Fprintf(&b, "\t\tc.JSON(%s, out)\n", statusConst(o.Status))
 			}
-			fmt.Fprintf(&b, "\t\tc.JSON(%s, out)\n", statusConst(o.Status))
 		}
 		b.WriteString("\t})\n")
 	}
@@ -283,6 +290,9 @@ func handlersFile(name, apiImport string, ops []op) []byte {
 	var imports []string
 	if strings.Contains(code, "context.Context") {
 		imports = append(imports, `"context"`)
+	}
+	if strings.Contains(code, "io.ReadCloser") {
+		imports = append(imports, `"io"`)
 	}
 	if strings.Contains(code, "http.Status") {
 		imports = append(imports, `"net/http"`)
@@ -313,4 +323,35 @@ func statusConst(code int) string {
 		return "http.StatusNoContent"
 	}
 	return fmt.Sprint(code)
+}
+
+// routable refuses paths gin cannot route together: two parameters of
+// different names at the same place, .../environments/{name} beside
+// .../environments/{environment}/modules. gin would panic at start.
+func routable(ops []op) error {
+	seen := map[string]string{} // a parameter's place: its name, and its path
+	for _, o := range ops {
+		segments := strings.Split(o.Path, "/")
+		for i, seg := range segments {
+			name, ok := strings.CutPrefix(seg, "{")
+			if !ok {
+				continue
+			}
+			name = strings.TrimSuffix(name, "}")
+			place := strings.Join(segments[:i], "/")
+			for j := range i {
+				if strings.HasPrefix(segments[j], "{") {
+					place = strings.Replace(place, segments[j], "{}", 1)
+				}
+			}
+			if other, ok := seen[place]; ok {
+				if otherName, otherPath, _ := strings.Cut(other, " "); otherName != name {
+					return fmt.Errorf("%s: {%s} where %s has {%s}: gin routes a place under one name, rename one", o.Path, name, otherPath, otherName)
+				}
+				continue
+			}
+			seen[place] = name + " " + o.Path
+		}
+	}
+	return nil
 }

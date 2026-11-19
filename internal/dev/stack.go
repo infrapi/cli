@@ -276,7 +276,7 @@ var sources = []struct{ prefix, from string }{
 	{"routes/", "domain, ports; a route changed, added or removed (null): gateway.routes.<id>. Your API's route: infrapi-cli dev api add"},
 	{"keys/", "kayra.keys.self, kayra.keys.local for keys of your own; --new-keys for new ones"},
 	{"apisix/config.yaml", "gateway.config"},
-	{"compose.yaml", "none: it is infrapi-cli's; a compose.override.yaml beside dev.yaml is read after it"},
+	{"compose.yaml", "compose.config; or a compose.override.yaml beside dev.yaml, read after it"},
 	{"compose.docker.yaml", "none: it is infrapi-cli's; a compose.override.yaml beside dev.yaml is read after it"},
 	{"apisix/routes.sh", "none: it is infrapi-cli's; mount a script of your own from compose.override.yaml"},
 	{"kayra/Dockerfile", "none: it is infrapi-cli's"},

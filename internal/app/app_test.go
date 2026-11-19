@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/infrapi/cli/internal/dev"
 )
 
@@ -73,7 +75,7 @@ func TestInit(t *testing.T) {
 		t.Errorf("dev.yaml app.api %q", c.App.API)
 	}
 	gr := read(t, filepath.Join(root, ".goreleaser.yaml"))
-	for _, want := range []string{"- deb\n", "- rpm\n", "- ghcr.io/acme/compute\n", "archives:"} {
+	for _, want := range []string{"- deb\n", "- rpm\n", "- \"ghcr.io/acme/compute\"\n", "archives:"} {
 		if !strings.Contains(gr, want) {
 			t.Errorf(".goreleaser.yaml has no %q", want)
 		}
@@ -108,6 +110,27 @@ func TestInit_gitlabNoPackages(t *testing.T) {
 	}
 	if !strings.Contains(read(t, filepath.Join(root, "Makefile")), "export GOPRIVATE ?= gitlab.example.com/*") {
 		t.Error("Makefile has no GOPRIVATE")
+	}
+}
+
+// On GitLab, the image is the pipeline's: GoReleaser's template, quoted
+// in .goreleaser.yaml, $CI_REGISTRY_IMAGE for a reader. Every YAML file
+// written parses.
+func TestInit_gitlabImage(t *testing.T) {
+	root := newProject(t, Options{Name: "dns", Module: "gitlab.example.com/team/dns", CI: CIGitLab})
+	if gr := read(t, filepath.Join(root, ".goreleaser.yaml")); !strings.Contains(gr, `- "{{ .Env.CI_REGISTRY_IMAGE }}"`) {
+		t.Errorf(".goreleaser.yaml:\n%s", gr)
+	}
+	for _, f := range []string{"README.md", "Dockerfile"} {
+		if c := read(t, filepath.Join(root, f)); strings.Contains(c, "{{") || !strings.Contains(c, "$CI_REGISTRY_IMAGE") {
+			t.Errorf("%s:\n%s", f, c)
+		}
+	}
+	for _, f := range []string{".goreleaser.yaml", ".gitlab-ci.yml", ".golangci.yml", "dev.yaml", "api/dns-v1.yaml"} {
+		var v any
+		if err := yaml.Unmarshal([]byte(read(t, filepath.Join(root, f))), &v); err != nil {
+			t.Errorf("%s: %v", f, err)
+		}
 	}
 }
 
@@ -205,7 +228,16 @@ func TestGenerate_types(t *testing.T) {
       responses:
         '200':
           description: The images.
-          content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Image'}}}}`, 1)
+          content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Image'}}}}
+  /apis/compute.infrapi.io/v1/images/{name}/disk:
+    get:
+      operationId: getImageDisk
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: The disk, gzipped.
+          content: {application/gzip: {schema: {type: string, format: binary}}}`, 1)
 	data = strings.Replace(data, "  schemas:\n", `  schemas:
     Image:
       type: object
@@ -240,7 +272,9 @@ func TestGenerate_types(t *testing.T) {
 		}
 	}
 	h := read(t, filepath.Join(root, "internal/compute/zz_generated.go"))
-	if !strings.Contains(h, "ListImages(ctx context.Context, os string) ([]api.Image, error)") || !strings.Contains(h, `c.Query("os")`) {
+	if !strings.Contains(h, "ListImages(ctx context.Context, os string) ([]api.Image, error)") || !strings.Contains(h, `c.Query("os")`) ||
+		!strings.Contains(h, "GetImageDisk(ctx context.Context, name string) (io.ReadCloser, error)") ||
+		!strings.Contains(h, `c.DataFromReader(http.StatusOK, -1, "application/gzip", out, nil)`) || !strings.Contains(h, `"io"`) {
 		t.Errorf("handlers:\n%s", h)
 	}
 	parses(t, root)
@@ -252,7 +286,14 @@ func TestGenerate_refuses(t *testing.T) {
 		"another group":  {"paths: {}", "paths:\n  /apis/other.infrapi.io/v1/x:\n    get:\n      operationId: x\n      responses: {'200': {description: x}}"},
 		"no group":       {"  x-infrapi-group: compute.infrapi.io\n", ""},
 		"bad title":      {"title: compute", "title: Compute"},
-		"bad schema":     {"    Problem:\n      type: object", "    problem:\n      type: object"},
+		"binary, an object": {"paths: {}", "paths:\n  /apis/compute.infrapi.io/v1/x:\n    get:\n      operationId: getX\n" +
+			"      responses: {'200': {description: x, content: {image/png: {schema: {type: object}}}}}"},
+		"bad schema": {"    Problem:\n      type: object", "    problem:\n      type: object"},
+		"gin conflict": {"paths: {}", "paths:\n" +
+			"  /apis/compute.infrapi.io/v1/x/{a}:\n    get:\n      operationId: getX\n" +
+			"      parameters: [{name: a, in: path, required: true, schema: {type: string}}]\n      responses: {'204': {description: x}}\n" +
+			"  /apis/compute.infrapi.io/v1/x/{b}/y:\n    get:\n      operationId: getY\n" +
+			"      parameters: [{name: b, in: path, required: true, schema: {type: string}}]\n      responses: {'204': {description: x}}"},
 	} {
 		root := newProject(t, Options{Name: "compute"})
 		contract := filepath.Join(root, "api", "compute-v1.yaml")

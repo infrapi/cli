@@ -127,7 +127,13 @@ func loginCommand() *cli.Command {
 }
 
 func runLogin(ctx context.Context, cmd *cli.Command) error {
-	server := cmd.String("server")
+	server, err := serverURL(cmd.String("server"))
+	if err != nil {
+		return fmt.Errorf("login: %w", err)
+	}
+	if cmd.Args().Len() > 0 {
+		return fmt.Errorf("login: unexpected argument %q: login takes none, only flags", cmd.Args().First())
+	}
 
 	noBrowser := cmd.Bool("no-browser")
 	timeout := cmd.Duration("timeout")
@@ -141,7 +147,6 @@ func runLogin(ctx context.Context, cmd *cli.Command) error {
 	defer cancel()
 
 	var result *oauth2login.Result
-	var err error
 	if noBrowser {
 		result, err = oauth2login.LoginToServerManual(loginCtx, server, os.Stdin, os.Stderr)
 	} else {
@@ -222,6 +227,16 @@ func contextCommand() *cli.Command {
 				Action:    runContextDelete,
 			},
 			{
+				Name:      "namespace",
+				Aliases:   []string{"ns"},
+				Usage:     "set the namespace commands address when they name none (-n), like kubens; print it without <name>",
+				ArgsUsage: "[<name>]",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{Name: "unset", Usage: "forget the namespace: every namespaced command then needs -n"},
+				},
+				Action: runContextNamespace,
+			},
+			{
 				Name:      "token",
 				Usage:     "print a context's bearer token (defaults to the current context)",
 				ArgsUsage: "[name]",
@@ -253,9 +268,9 @@ func runContextList(ctx context.Context, cmd *cli.Command) error {
 		if !c.Expiry.IsZero() {
 			expiry = c.Expiry.Local().Format(time.RFC3339)
 		}
-		rows = append(rows, []string{current, name, c.Provider, c.Server, expiry})
+		rows = append(rows, []string{current, name, c.Provider, c.Server, cmp.Or(c.Namespace, "-"), expiry})
 	}
-	return ui.Table(os.Stdout, []string{"CURRENT", "NAME", "PROVIDER", "SERVER", "EXPIRY"}, rows,
+	return ui.Table(os.Stdout, []string{"CURRENT", "NAME", "PROVIDER", "SERVER", "NAMESPACE", "EXPIRY"}, rows,
 		func(i int) bool { return names[i] == f.CurrentContext })
 }
 
@@ -273,6 +288,9 @@ func runContextCurrent(ctx context.Context, cmd *cli.Command) error {
 	if c.Username != "" {
 		pairs = append(pairs, [2]string{"username", c.Username})
 	}
+	if c.Namespace != "" {
+		pairs = append(pairs, [2]string{"namespace", c.Namespace})
+	}
 	if !c.Expiry.IsZero() {
 		pairs = append(pairs, [2]string{"expiry", c.Expiry.Local().Format(time.RFC3339)})
 	}
@@ -285,8 +303,12 @@ func runContextCurrent(ctx context.Context, cmd *cli.Command) error {
 // current context, exactly like a login.
 func runContextSet(ctx context.Context, cmd *cli.Command) error {
 	name := cmd.Args().First()
-	if name == "" {
+	if name == "" || cmd.Args().Len() > 1 {
 		return fmt.Errorf("auth context: usage: infrapi-cli auth context set <name> --server <url> --token <token>")
+	}
+	server, err := serverURL(cmd.String("server"))
+	if err != nil {
+		return fmt.Errorf("auth context: %w", err)
 	}
 
 	f, err := clicontext.Load()
@@ -294,7 +316,7 @@ func runContextSet(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	f.SetContext(name, clicontext.Context{
-		Server:    cmd.String("server"),
+		Server:    server,
 		Token:     cmd.String("token"),
 		TokenType: "Bearer",
 	})
@@ -345,6 +367,48 @@ func runContextDelete(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	_, _ = fmt.Fprintf(ui.Stdout(), "infrapi-cli: %s %s\n", ui.OK("deleted context"), ui.Name(name))
+	return nil
+}
+
+// runContextNamespace sets, prints or forgets (--unset) the namespace of
+// the current context, or of --context's: like kubens, but per context.
+func runContextNamespace(ctx context.Context, cmd *cli.Command) error {
+	f, err := clicontext.Load()
+	if err != nil {
+		return err
+	}
+	name := cmd.String("context")
+	if name == "" {
+		if name, _, err = f.Current(); err != nil {
+			return err
+		}
+	}
+	c, ok := f.Contexts[name]
+	if !ok {
+		return fmt.Errorf("auth context namespace: no such context %q", name)
+	}
+	ns := cmd.Args().First()
+	switch {
+	case cmd.Bool("unset"):
+		ns = ""
+	case ns == "":
+		if c.Namespace == "" {
+			return fmt.Errorf("auth context namespace: context %s has no namespace: set one with infrapi-cli auth context namespace <name>", name)
+		}
+		_, err := fmt.Fprintln(os.Stdout, c.Namespace)
+		return err
+	}
+	if err := f.SetNamespace(name, ns); err != nil {
+		return err
+	}
+	if err := f.Save(); err != nil {
+		return err
+	}
+	if ns == "" {
+		_, _ = fmt.Fprintf(ui.Stdout(), "infrapi-cli: context %s %s\n", ui.Name(name), ui.OK("has no namespace"))
+		return nil
+	}
+	_, _ = fmt.Fprintf(ui.Stdout(), "infrapi-cli: context %s %s %s\n", ui.Name(name), ui.OK("now addresses namespace"), ui.Name(ns))
 	return nil
 }
 
@@ -410,26 +474,21 @@ func resolveContext(cmd *cli.Command) (clicontext.Context, error) {
 // rbac.RegisterAuthorizeRoute check — the endpoint its
 // /.well-known/kayra.json names — whether the current context's own
 // already-authenticated identity (never asserted locally) is granted
-// verb on resource for --api, the application being asked about, by its
-// full name or short name (see resolveAPI).
+// verb on resource, named as kubectl names one (see resolveResource).
 //
-// This only ever tests rbac.Repository.Authorize — namespace-scoped
-// Group/Role/RoleBinding objects, the mechanism other apps built on
-// infrapi/lib use to authorize their own requests. It is never the
-// mechanism Kayra's own management-plane routes use to gate
-// themselves (see kayraOwnManagementWarning): asking about one of
-// those still gets a real, truthful answer to "does a stored Rule
-// grant this," just not necessarily the answer to "will the real
-// endpoint let me."
+// Kayra's /check answers every route as that route decides it: an app's
+// resources in a namespace on the namespace's own RBAC, a namespace's
+// management (Kayra's groups, roles, rolebindings, subscriptions) on the
+// cluster bindings scoped to it, and a cluster-scoped resource (no
+// --namespace) on the cluster RBAC, the sysadmin binding included.
 func canICommand() *cli.Command {
 	return &cli.Command{
 		Name:        "can-i",
 		Usage:       "check whether the current login can do <verb> on <resource>",
-		Description: "Tests rbac.Authorize (namespace-scoped Group/Role/RoleBinding) — the authorization path other apps built on infrapi/lib use for their own API. Kayra's own management-plane routes (namespaces, api registrations, cluster/namespace groups-roles-rolebindings, subscriptions) are gated by other mechanisms entirely and are never decided by this check — asking about one of those prints a warning alongside the answer.",
-		ArgsUsage:   "<verb> <resource>",
+		Description: "Asks Kayra's check endpoint, which answers as the real route would: an app's resources in a namespace, a namespace's own groups, roles, rolebindings and subscriptions, or a cluster-scoped resource (namespaces, apiregistrations, clusterroles, an app's cluster-scoped resources). The resource is named as kubectl names one: vms, or vms.compute.infrapi.io.",
+		ArgsUsage:   "<verb> <resource>[.<api group>][/<sub-resource>]",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "api", Required: true, Usage: "the API group being asked about: its full name (compute.infrapi.io) or its short name (compute)"},
-			&cli.StringFlag{Name: "namespace", Required: true, Usage: "the namespace to check against"},
+			&cli.StringFlag{Name: "namespace", Aliases: []string{"n"}, Usage: "the namespace of a namespaced resource (default: the context's, see `auth context namespace`); a cluster-scoped one has none"},
 		},
 		Action: runCanI,
 	}
@@ -438,7 +497,7 @@ func canICommand() *cli.Command {
 func runCanI(ctx context.Context, cmd *cli.Command) error {
 	args := cmd.Args()
 	if args.Len() != 2 {
-		return fmt.Errorf("can-i: usage: infrapi-cli auth can-i <verb> <resource> --api <api> --namespace <namespace>")
+		return fmt.Errorf("can-i: usage: infrapi-cli auth can-i <verb> <resource>[.<api group>] [-n <namespace>]")
 	}
 	verb, resource := args.Get(0), args.Get(1)
 
@@ -451,16 +510,17 @@ func runCanI(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return fmt.Errorf("can-i: %w", err)
 	}
-	api, err := resolveAPI(ctx, c, cmd.String("api"))
+	ref, err := resolveResource(ctx, c, resource)
+	if err != nil {
+		warnAmbiguous(err)
+		return fmt.Errorf("can-i: %w", err)
+	}
+	namespace, err := namespaceFor(ref, cmd.String("namespace"), c)
 	if err != nil {
 		return fmt.Errorf("can-i: %w", err)
 	}
 
-	if warning := kayraOwnManagementWarning(doc, api, resource); warning != "" {
-		_, _ = fmt.Fprintln(ui.Stderr(), "infrapi-cli:", ui.Warn("warning:"), warning)
-	}
-
-	allowed, reason, err := checkAuthorized(ctx, c, doc.Endpoints.Check, cmd.String("namespace"), api, resource, verb)
+	allowed, reason, err := checkAuthorized(ctx, c, doc.Endpoints.Check, namespace, ref.Api, ref.Resource, verb)
 	if err != nil {
 		return fmt.Errorf("can-i: %w", err)
 	}
@@ -545,65 +605,14 @@ func formatUserinfoValue(v any) string {
 	if !ok {
 		return fmt.Sprint(v)
 	}
+	if len(list) == 0 {
+		return "-"
+	}
 	parts := make([]string, len(list))
 	for i, item := range list {
 		parts[i] = fmt.Sprint(item)
 	}
 	return strings.Join(parts, ", ")
-}
-
-// kayraOwnManagementWarning reports, when api/resource names one of
-// Kayra's own management-plane resources (its built-in groups, per
-// doc), which
-// other mechanism actually gates it — none of them go through
-// rbac.Authorize (what the /check endpoint, and so can-i, tests) at
-// all:
-//
-//   - authorization.<domain>'s groups/roles/rolebindings and
-//     catalog.<domain>'s subscriptions are gated by cluster RBAC
-//     (rbac.CanManageNamespaceRBAC, via RequireClusterRBAC) — a
-//     cluster-scoped Group/Role/RoleBinding check, a different data
-//     set from the namespace-scoped one Authorize itself checks.
-//   - authorization.<domain>'s clustergroups/clusterroles/
-//     clusterrolebindings, catalog.<domain>'s api registrations, and
-//     system.<domain>'s namespaces are gated by middleware.SysadminGate
-//     alone — whether the caller's groups intersect sysadmin.groups,
-//     no Rule of any kind consulted.
-//
-// Empty when api/resource doesn't name one of these — including any
-// api that isn't one of Kayra's built-in groups, since that's another
-// app's own API, exactly what Authorize is for.
-// singularizeResource strips a trailing "s" so "group"/"groups",
-// "role"/"roles", etc. both match — a human typing `can-i ... delete
-// group` means exactly the same resource as the real route's own
-// "groups", and kayraOwnManagementWarning would otherwise miss it on
-// a plain string mismatch.
-func singularizeResource(resource string) string {
-	return strings.TrimSuffix(resource, "s")
-}
-
-func kayraOwnManagementWarning(doc kayraDocument, api, resource string) string {
-	switch api {
-	case "":
-		return ""
-	case doc.builtinGroup("authorization"):
-		switch singularizeResource(resource) {
-		case "group", "role", "rolebinding":
-			return "namespace groups/roles/rolebindings are gated by cluster RBAC (CanManageNamespaceRBAC), never by this check — it tests a different, namespace-scoped Group/Role/RoleBinding set"
-		case "clustergroup", "clusterrole", "clusterrolebinding":
-			return "cluster groups/roles/rolebindings are gated by the sysadmin group alone (SysadminGate) — compare `auth whoami`'s groups against sysadmin.groups yourself, this check can't see either"
-		}
-	case doc.builtinGroup("catalog"):
-		switch singularizeResource(resource) {
-		case "subscription", "subscriptions/sync":
-			return "subscriptions are gated by cluster RBAC (CanManageNamespaceRBAC), never by this check — it tests a different, namespace-scoped Group/Role/RoleBinding set"
-		case "apiregistration":
-			return "api registrations are gated by the sysadmin group alone (SysadminGate) — compare `auth whoami`'s groups against sysadmin.groups yourself, this check can't see either"
-		}
-	case doc.builtinGroup("system"):
-		return "namespaces are gated by the sysadmin group alone (SysadminGate) — compare `auth whoami`'s groups against sysadmin.groups yourself, this check can't see either"
-	}
-	return ""
 }
 
 // checkAuthorized POSTs c's own bearer token against the server's check
@@ -660,4 +669,18 @@ func checkAuthorized(ctx context.Context, c clicontext.Context, checkPath, names
 		return false, "", fmt.Errorf("parse response: %w", err)
 	}
 	return result.Allowed, result.Reason, nil
+}
+
+// serverURL checks --server is a server's base URL, http(s) with a host:
+// "--server --server https://..." takes the second --server for the
+// first's value, which no browser could open.
+func serverURL(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
+		if strings.HasPrefix(raw, "-") {
+			return "", fmt.Errorf("--server %q is not a server's URL: a flag given twice? give --server once, then its URL", raw)
+		}
+		return "", fmt.Errorf("--server %q is not a server's URL: give one such as https://kayra.example.com", raw)
+	}
+	return strings.TrimRight(raw, "/"), nil
 }

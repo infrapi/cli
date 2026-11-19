@@ -58,8 +58,8 @@ infrapi-cli auth context set admin --server https://kayra.example.com --token "$
 
 ```bash
 infrapi-cli apis                                  # every API group and its resources
-infrapi-cli get catalog apiregistrations
-infrapi-cli auth can-i create subscriptions --api catalog.infrapi.io --namespace core
+infrapi-cli get apiregistrations
+infrapi-cli auth can-i create subscriptions --namespace core
 ```
 
 **curl**

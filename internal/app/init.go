@@ -25,7 +25,7 @@ var templates embed.FS
 // Versions a new project starts with.
 const (
 	GoVersion  = "1.27.3"
-	LibVersion = "v0.16.0"
+	LibVersion = "v0.18.0"
 	GinVersion = "v1.12.0"
 	// CIRef is the infrapi/ci version its CI imports.
 	CIRef = "v1"
@@ -233,13 +233,17 @@ func Init(o Options) (string, error) {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return "", err
 	}
+	// ImageName is the image as a reader sees it: the pipeline's
+	// variable, not GoReleaser's template of it
 	registry, _, _ := strings.Cut(o.Image, "/")
+	imageName := o.Image
 	if o.Image == gitlabImage {
 		registry = "" // the pipeline's own, $CI_REGISTRY
+		imageName = "$CI_REGISTRY_IMAGE"
 	}
 	vars := map[string]any{
 		"Name": o.Name, "Module": o.Module, "Group": o.Group, "CI": o.CI, "GoPrivate": o.GoPrivate,
-		"Image": o.Image, "Registry": registry, "EnvPrefix": dev.EnvPrefix(o.Name),
+		"Image": o.Image, "ImageName": imageName, "Registry": registry, "EnvPrefix": dev.EnvPrefix(o.Name),
 		"Archives": slices.Contains(o.Packages, PackageArchive), "Deb": slices.Contains(o.Packages, PackageDeb),
 		"RPM": slices.Contains(o.Packages, PackageRPM), "Docker": slices.Contains(o.Packages, PackageImage),
 		"GoVersion": GoVersion, "LibVersion": LibVersion, "GinVersion": GinVersion, "CIRef": CIRef,

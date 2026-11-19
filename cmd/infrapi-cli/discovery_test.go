@@ -1,39 +1,80 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/infrapi/cli/internal/clicontext"
 )
 
-func TestMatchAPI(t *testing.T) {
+func TestMatchResource(t *testing.T) {
 	groups := []discoveryGroup{
-		{Api: "system.infrapi.io", Builtin: true},
-		{Api: "catalog.infrapi.io", Builtin: true},
-		{Api: "compute.infrapi.io", ShortName: "vm"},
-		{Api: "vault.infrapi.io", ShortName: "vault"},
-		{Api: "vault.ops.infrapi.io"},
+		{Api: "system.infrapi.io", Builtin: true, Resources: []discoveryResource{{Name: "namespaces"}}},
+		{Api: "compute.infrapi.io", ShortName: "cp", Version: "v2", Resources: []discoveryResource{
+			{Name: "vms", Namespaced: true}, {Name: "vms/reboot", Namespaced: true}, {Name: "policies", Namespaced: true}, {Name: "flavors"},
+		}},
+		{Api: "legacy.infrapi.io", Resources: []discoveryResource{{Name: "policies", Namespaced: true}}},
+		{Api: "vault.infrapi.io"}, // registered, never synced
 	}
-	for name, want := range map[string]string{
-		"catalog": "catalog.infrapi.io", // first label
-		"compute": "compute.infrapi.io", // first label
-		"vm":      "compute.infrapi.io", // short name
-		"vault":   "vault.infrapi.io",   // a short name wins over first labels
+	for typed, want := range map[string]resourceRef{
+		"vms":                        {Api: "compute.infrapi.io", Version: "v2", Resource: "vms", Namespaced: true},
+		"vm":                         {Api: "compute.infrapi.io", Version: "v2", Resource: "vms", Namespaced: true},
+		"vms.compute.infrapi.io":     {Api: "compute.infrapi.io", Version: "v2", Resource: "vms", Namespaced: true},
+		"vms.compute":                {Api: "compute.infrapi.io", Version: "v2", Resource: "vms", Namespaced: true},
+		"vms.cp":                     {Api: "compute.infrapi.io", Version: "v2", Resource: "vms", Namespaced: true},
+		"vms/reboot":                 {Api: "compute.infrapi.io", Version: "v2", Resource: "vms/reboot", Namespaced: true},
+		"flavors":                    {Api: "compute.infrapi.io", Version: "v2", Resource: "flavors"},
+		"namespaces":                 {Api: "system.infrapi.io", Version: "v1", Resource: "namespaces"},
+		"policies.legacy.infrapi.io": {Api: "legacy.infrapi.io", Version: "v1", Resource: "policies", Namespaced: true},
+		"secrets.vault.infrapi.io":   {Api: "vault.infrapi.io", Version: "v1", Resource: "secrets", Unknown: true},
+		"things.other.infrapi.io":    {Api: "other.infrapi.io", Version: "v1", Resource: "things", Unknown: true},
 	} {
-		got, err := matchAPI(groups, name)
+		got, err := matchResource(groups, typed)
 		if err != nil || got != want {
-			t.Errorf("matchAPI(%q) = %q, %v; want %q", name, got, err, want)
+			t.Errorf("%s: %+v, %v; want %+v", typed, got, err, want)
 		}
 	}
-	if _, err := matchAPI(groups, "nope"); err == nil || !strings.Contains(err.Error(), "infrapi-cli apis") {
-		t.Errorf("unknown api: %v", err)
+	_, err := matchResource(groups, "policies")
+	var amb *errAmbiguous
+	if !errors.As(err, &amb) || strings.Join(amb.fullNames, " ") != "policies.compute.infrapi.io policies.legacy.infrapi.io" {
+		t.Errorf("ambiguous: %v", err)
 	}
-	ambiguous := append(groups, discoveryGroup{Api: "compute.ops.infrapi.io"})
-	if _, err := matchAPI(ambiguous, "compute"); err == nil || !strings.Contains(err.Error(), "several") {
-		t.Errorf("ambiguous api: %v", err)
+	for typed, msg := range map[string]string{
+		"nope":                    "no api group serves",
+		"nope.compute.infrapi.io": "serves no resource",
+		"vms.nope":                "no api group named",
+	} {
+		if _, err := matchResource(groups, typed); err == nil || !strings.Contains(err.Error(), msg) {
+			t.Errorf("%s: %v, want %q", typed, err, msg)
+		}
 	}
 }
 
-func TestBuiltinGroupAndWarning(t *testing.T) {
+func TestNamespaceFor(t *testing.T) {
+	ns := resourceRef{Api: "compute.infrapi.io", Resource: "vms", Namespaced: true}
+	cluster := resourceRef{Api: "system.infrapi.io", Resource: "namespaces"}
+	ctx := clicontext.Context{Namespace: "thetenant"}
+	for _, c := range []struct {
+		ref        resourceRef
+		flag, want string
+		c          clicontext.Context
+	}{
+		{ns, "", "thetenant", ctx},
+		{ns, "core", "core", ctx},
+		{cluster, "core", "", ctx},
+		{resourceRef{Unknown: true}, "", "thetenant", ctx},
+	} {
+		if got, err := namespaceFor(c.ref, c.flag, c.c); err != nil || got != c.want {
+			t.Errorf("%+v %q: %q %v, want %q", c.ref, c.flag, got, err, c.want)
+		}
+	}
+	if _, err := namespaceFor(ns, "", clicontext.Context{}); err == nil || !strings.Contains(err.Error(), "auth context namespace") {
+		t.Errorf("no namespace: %v", err)
+	}
+}
+
+func TestBuiltinGroup(t *testing.T) {
 	doc := kayraDocument{Domain: "infrapi.io", APIs: map[string]string{
 		"system":        "/apis/system.infrapi.io/v1",
 		"catalog":       "/apis/catalog.infrapi.io/v1",
@@ -44,19 +85,5 @@ func TestBuiltinGroupAndWarning(t *testing.T) {
 	}
 	if got := doc.builtinGroup("nope"); got != "" {
 		t.Errorf("builtinGroup(nope) = %q", got)
-	}
-	if w := kayraOwnManagementWarning(doc, "catalog.infrapi.io", "subscriptions"); !strings.Contains(w, "cluster RBAC") {
-		t.Errorf("subscriptions warning: %q", w)
-	}
-	if w := kayraOwnManagementWarning(doc, "system.infrapi.io", "namespaces"); !strings.Contains(w, "sysadmin") {
-		t.Errorf("namespaces warning: %q", w)
-	}
-	// another app's API, even on Kayra's domain: what the check is for
-	if w := kayraOwnManagementWarning(doc, "compute.infrapi.io", "vms"); w != "" {
-		t.Errorf("compute warning: %q", w)
-	}
-	// an empty document never matches an empty api
-	if w := kayraOwnManagementWarning(kayraDocument{}, "", "groups"); w != "" {
-		t.Errorf("empty warning: %q", w)
 	}
 }

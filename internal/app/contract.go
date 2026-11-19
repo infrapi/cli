@@ -238,6 +238,10 @@ type op struct {
 	Body    string // the request body's Go type, in package api; empty without one
 	Status  int    // the success status
 	Result  string // the response's Go type; empty without a body
+	// Stream is the media type of a binary response (type: string,
+	// format: binary), application/gzip say: Result is then io.ReadCloser,
+	// streamed as it is.
+	Stream string
 }
 
 type param struct {
@@ -333,6 +337,15 @@ func (c *contract) operation(pkg, path, method string, item *pathItem, o *operat
 			}
 			out.Result = t
 		}
+		for mt, media := range r.Content {
+			if mt == "application/json" || out.Result != "" {
+				continue
+			}
+			if media.Schema == nil || media.Schema.Type != "string" || media.Schema.Format != "binary" {
+				return op{}, fmt.Errorf("response %s: %s: application/json, or type: string, format: binary", codes[0], mt)
+			}
+			out.Result, out.Stream = "io.ReadCloser", mt
+		}
 	}
 	return out, nil
 }
@@ -387,7 +400,7 @@ func goType(pkg string, s *schema) (string, error) {
 // initialisms are written in capitals in a Go name.
 var initialisms = map[string]bool{
 	"api": true, "cpu": true, "dns": true, "gb": true, "http": true, "https": true, "id": true, "ip": true, "json": true,
-	"kb": true, "mb": true, "os": true, "sql": true, "ssh": true, "tcp": true, "tls": true, "ttl": true, "udp": true,
+	"kb": true, "mb": true, "os": true, "sha": true, "sql": true, "ssh": true, "tcp": true, "tls": true, "ttl": true, "udp": true,
 	"uri": true, "url": true, "uuid": true, "vm": true,
 }
 

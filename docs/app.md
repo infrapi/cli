@@ -61,7 +61,7 @@ compute/
 ```
 
 Then `go mod tidy`, when Go is installed, with the project's `GOPRIVATE`.
-The project starts on lib `v0.16.0` and Go 1.27.3.
+The project starts on lib `v0.18.0` and Go 1.27.3.
 
 ## app add
 
@@ -107,6 +107,14 @@ its group, every path under `/apis/<group>/<version>`; an `operationId` on
 every operation; JSON bodies; a `$ref` to `#/components/schemas/<Name>`, or
 a plain type, for a body or a response. The types are in
 [Develop an API](develop/develop-an-api.md#3-describe-it-in-the-contract).
+
+A response that is not JSON, a download, is a `type: string, format:
+binary` schema under its media type (`application/gzip`, say): its handler
+returns an `io.ReadCloser`, streamed with that media type.
+
+It refuses two path parameters of different names at the same place
+(`.../environments/{name}` beside `.../environments/{environment}/modules`):
+gin routes a place under one name, and would panic at start.
 
 ## app register
 

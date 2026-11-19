@@ -367,3 +367,58 @@ func TestRender_stackFiles(t *testing.T) {
 		t.Errorf("keep = %q", got)
 	}
 }
+
+// compose.config is merged into compose.yaml: a service of the project's
+// own added, a stack's one changed key by key, null removing a key; the
+// stack's services otherwise as they are. Without it, compose.yaml is
+// infrapi-cli's, byte for byte.
+func TestOverride_composeConfig(t *testing.T) {
+	c, err := LoadConfig(writeConfig(t, `compose:
+  config:
+    services:
+      vault:
+        image: docker.io/hashicorp/vault:1.20
+        ports: ["127.0.0.1:8200:8200"]
+      etcd:
+        healthcheck: null
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if _, err := Render(c, dir, RenderOptions{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Services map[string]map[string]any `yaml:"services"`
+	}
+	text := read(t, filepath.Join(dir, "compose.yaml"))
+	if err := yaml.Unmarshal([]byte(text), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Services["vault"]["image"] != "docker.io/hashicorp/vault:1.20" {
+		t.Errorf("vault: %v", doc.Services["vault"])
+	}
+	if _, ok := doc.Services["etcd"]["healthcheck"]; ok || doc.Services["etcd"]["image"] == nil {
+		t.Errorf("etcd: %v", doc.Services["etcd"])
+	}
+	if doc.Services["kayra"] == nil || !strings.Contains(text, "${ETCD_PORT}") {
+		t.Error("the stack's services changed")
+	}
+
+	plain, err := LoadConfig(writeConfig(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir = t.TempDir()
+	if _, err := Render(plain, dir, RenderOptions{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	want, _ := templates.ReadFile("templates/stack/compose.yaml")
+	if read(t, filepath.Join(dir, "compose.yaml")) != string(want) {
+		t.Error("compose.yaml rewritten without compose.config")
+	}
+	if _, err := LoadConfig(writeConfig(t, "compose:\n  config: [vault]\n")); err == nil {
+		t.Error("compose.config, a list")
+	}
+}

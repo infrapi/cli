@@ -51,6 +51,10 @@ type Config struct {
 	Compose struct {
 		// Env is added to, or replaces in, the env compose reads.
 		Env map[string]string `yaml:"env"`
+		// Config is merged into .infrapi-dev/compose.yaml: a service of
+		// the project's own, services.vault say, or one of the stack's
+		// changed; null removes.
+		Config yaml.Node `yaml:"config"`
 	} `yaml:"compose"`
 
 	Ports Ports `yaml:"ports"`
@@ -203,6 +207,9 @@ func (c *Config) checkOverrides() error {
 	}
 	if n := &c.Gateway.Config; n.Kind != 0 && !isNull(n) && n.Kind != yaml.MappingNode {
 		return fmt.Errorf("gateway.config: a map, merged into APISIX's config.yaml")
+	}
+	if n := &c.Compose.Config; n.Kind != 0 && !isNull(n) && n.Kind != yaml.MappingNode {
+		return fmt.Errorf("compose.config: a map, merged into compose.yaml")
 	}
 	for id, n := range c.Gateway.Routes {
 		if !routeID.MatchString(id) {

@@ -192,8 +192,8 @@ registered yet. Ask it what it serves, as `dev-admin`:
 
 ```bash
 infrapi-cli apis                              # every API group and its resources: Kayra's own, for now
-infrapi-cli get system namespaces             # the tenants: none yet
-infrapi-cli get catalog apiregistrations      # the registered APIs: none yet
+infrapi-cli get namespaces             # the tenants: none yet
+infrapi-cli get apiregistrations      # the registered APIs: none yet
 ```
 
 **curl**
@@ -206,7 +206,7 @@ curl -s $GW/apis/catalog.infrapi.io/v1/apiregistrations -H "Authorization: Beare
 ```
 
 The same calls as `dev-nobody` are refused: try
-`infrapi-cli get system namespaces --context dev-nobody`.
+`infrapi-cli get namespaces --context dev-nobody`.
 
 ## 8. Next
 

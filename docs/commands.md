@@ -25,7 +25,7 @@ Colors are off, with no escape sequence at all, when:
 - `--no-color` is given, a global flag, before or after the command.
 
 ```bash
-infrapi-cli get catalog apiregistrations -o json | jq .   # plain: a pipe
+infrapi-cli get apiregistrations -o json | jq .   # plain: a pipe
 NO_COLOR=1 infrapi-cli apis                               # plain
 infrapi-cli apis --no-color                               # plain
 ```
@@ -164,9 +164,9 @@ infrapi-cli auth login --server https://kayra.internal
 infrapi-cli auth login --server https://kayra-staging.internal --context-name staging
 
 infrapi-cli auth context list
-# CURRENT  NAME                       SERVER                            EXPIRY
-#          kayra.internal           https://kayra.internal          2026-11-03T16:04:05+01:00
-# *        staging                    https://kayra-staging.internal  2026-11-03T17:04:05+01:00
+# CURRENT  NAME            PROVIDER  SERVER                          NAMESPACE  EXPIRY
+#          kayra.internal  okta      https://kayra.internal          thetenant  2026-11-03T16:04:05+01:00
+# *        staging         okta      https://kayra-staging.internal  -          2026-11-03T17:04:05+01:00
 
 # save an existing token (e.g. a `kayra token mint` bootstrap token) without logging in
 infrapi-cli auth context set bootstrap --server http://localhost:8080 --token "$TOKEN"
@@ -178,6 +178,18 @@ infrapi-cli auth context token staging         # print a specific context's toke
 infrapi-cli auth context delete staging        # drop a saved login
 ```
 
+Like `kubens`, a context keeps the namespace commands address when they
+name none: `-n` overrides it for one command, and a cluster-scoped
+resource ignores it. A new login, or `set` again, keeps it.
+
+```bash
+infrapi-cli auth ctx ns thetenant        # the current context now works in thetenant
+infrapi-cli get vms                      # .../namespaces/thetenant/vms
+infrapi-cli get vms -n core              # .../namespaces/core/vms, this once
+infrapi-cli auth ctx ns                  # print it: thetenant
+infrapi-cli auth ctx ns --unset          # forget it
+```
+
 | Subcommand | Args | Meaning |
 |------------|------|---------|
 | `list` | — | list saved contexts, marking the current one with `*` |
@@ -185,6 +197,7 @@ infrapi-cli auth context delete staging        # drop a saved login
 | `set` | `<name>` | save `--token` for `--server` as a context and make it current — no login flow |
 | `use` | `<name>` | switch the current context |
 | `delete` | `<name>` | remove a saved context |
+| `namespace`, `ns` | `[name]` | set the namespace of the current context (or `--context`'s), print it without `<name>`, forget it with `--unset` |
 | `token` | `[name]` | print a context's bearer token (defaults to current) |
 
 #### One call in another context
@@ -195,7 +208,7 @@ or after itself, and `$INFRAPI_CONTEXT` does the same for a whole shell:
 
 ```bash
 infrapi-cli auth whoami --context staging          # staging, this once
-infrapi-cli --context staging get catalog apiregistrations
+infrapi-cli --context staging get apiregistrations
 INFRAPI_CONTEXT=staging infrapi-cli apis           # or export it for a session
 infrapi-cli auth context current                        # still the one you had
 ```
@@ -211,17 +224,18 @@ than managing it. Like every command, they take
 #### can-i
 
 Mirrors `kubectl auth can-i`: asks the server's own
-[check endpoint](https://infrapi.github.io/kayra/architecture/rbac-and-auth/#authorizing-other-apps-requests),
+[check endpoint](https://infrapi.github.io/kayra/architecture/rbac-and-auth/#who-decides),
 the one its [`/.well-known/kayra.json`](https://infrapi.github.io/kayra/packages/discovery/) names,
 whether the current context's already-authenticated identity is
-granted `<verb>` on `<resource>` for `--api` — the decision is always
+granted `<verb>` on `<resource>`, named as
+[the verbs name it](#naming-a-resource) — the decision is always
 the server's, never asserted locally.
 
 ```bash
-infrapi-cli auth can-i get pods --api compute.infrapi.io --namespace core
+infrapi-cli auth can-i get pods --namespace core
 # yes
 
-infrapi-cli auth can-i delete pods --api compute.infrapi.io --namespace core
+infrapi-cli auth can-i delete pods --namespace core
 # no
 # infrapi-cli: your roles in namespace "core" grant api "compute.infrapi.io", but not "delete" on "pods"
 ```
@@ -230,32 +244,24 @@ Prints `yes`/`no` to stdout and exits `0`/`1` accordingly — scriptable
 exactly like `kubectl auth can-i`. A denial's reason (when the server
 gives one) goes to stderr, never mixed into stdout.
 
-**This only ever tests `rbac.Authorize`** — namespace-scoped
-`Group`/`Role`/`RoleBinding` objects, the mechanism *other* apps built
-on infrapi/lib use to authorize their own API. None of Kayra's own
-management-plane routes are decided by it:
+The check answers every route as that route decides it, Kayra's own
+included:
 
-| Asking about... | Actually gated by |
+| Asking about... | Decided by |
 |---|---|
-| `authorization.<domain>`'s `groups`/`roles`/`rolebindings` | cluster RBAC (`CanManageNamespaceRBAC`) — a different, cluster-scoped `Group`/`Role`/`RoleBinding` set |
-| `catalog.<domain>`'s `subscriptions` | cluster RBAC (`CanManageNamespaceRBAC`), same as above |
-| `authorization.<domain>`'s `clustergroups`/`clusterroles`/`clusterrolebindings` | the sysadmin group alone (`SysadminGate`) — no `Rule` consulted at all |
-| `catalog.<domain>`'s `apiregistrations` | `SysadminGate` alone |
-| `system.<domain>`'s `namespaces` | `SysadminGate` alone |
+| an app's resources, with `--namespace` | the namespace's own groups, roles and rolebindings |
+| `authorization.<domain>`'s `groups`/`roles`/`rolebindings`, `catalog.<domain>`'s `subscriptions`, with `--namespace` | the cluster bindings scoped to that namespace |
+| a cluster-scoped resource, without `--namespace`: `system.<domain>`'s `namespaces`, `catalog.<domain>`'s `apiregistrations`, `authorization.<domain>`'s `cluster*`, an app's cluster-scoped resources | the cluster RBAC: the built-in sysadmin binding, then the global cluster bindings |
 
-Asking about one of these still gets a real, truthful answer — "does
-a stored `Rule` grant this" — just not necessarily the answer to "will
-the real endpoint let me." `can-i` prints a warning to stderr whenever
-`--api`/the verb's resource names one of them, so a "yes" or "no"
-here is never mistaken for the real decision. For anything
-`SysadminGate`-gated, compare [`whoami`](#whoami)'s `groups` against
-`sysadmin.groups` in the server's own config yourself — neither this
-command nor the server exposes that comparison any other way.
+```bash
+infrapi-cli auth can-i create namespaces
+# no
+# infrapi-cli: no global cluster role binding binds a cluster group of yours, and you are not a sysadmin
+```
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--api` | — | required; the API group being asked about, by its full name (`compute.infrapi.io`) or short name (`compute`, resolved through `GET /apis`) — never Kayra's own `authorization.<domain>` |
-| `--namespace` | — | required; the namespace to check against |
+| `--namespace`, `-n` | the context's | the namespace of a namespaced resource; a cluster-scoped one has none |
 
 #### whoami
 
@@ -313,18 +319,38 @@ listed with `-`.
 kubectl-style top-level verbs — a thin, generic REST client against
 *any* app's own API, following the exact route convention Kayra's
 own resources use (see
-[RBAC & auth](https://infrapi.github.io/kayra/architecture/rbac-and-auth/#authorizing-other-apps-requests)):
+[RBAC & auth](https://infrapi.github.io/kayra/architecture/rbac-and-auth/#who-decides)):
 
 ```
-{server}/apis/<group>/v1/namespaces/<namespace>/<resource>[/<name>]   # -n given: namespace-scoped
-{server}/apis/<group>/v1/<resource>[/<name>]                          # -n omitted: cluster-scoped
+{server}/apis/<group>/<version>/namespaces/<namespace>/<resource>[/<name>]   # a namespaced resource
+{server}/apis/<group>/<version>/<resource>[/<name>]                          # a cluster-scoped one
 ```
 
-`<api>` is the group's full name (`vault.infrapi.io`), or its short name
-or first label (`vault`, `catalog`), which `GET /apis` resolves to the one
-group it names — as `kubectl` resolves a resource through discovery.
+### Naming a resource
 
-authenticated with the current context's own bearer token. Kayra
+As with `kubectl`, a resource is named by its plural, or singular, alone
+(`vms`, `vm`), or by its full name, its plural then its api group
+(`vms.compute.infrapi.io`; the group's short name or first label works
+too, `vms.compute`). `GET /apis` says which group serves it, at which
+version, and whether it is namespaced: a namespaced one is addressed in
+`-n`, else the [context's namespace](#context); a cluster-scoped one
+never is.
+
+When several api groups serve the name, nothing is sent: a warning lists
+the command again with each full name.
+
+```bash
+infrapi-cli get policies
+# infrapi-cli: warning: "policies" is served by several api groups: run the command again with its full name:
+#   infrapi-cli get policies.compute.infrapi.io
+#   infrapi-cli get policies.legacy.infrapi.io
+# infrapi-cli: get: "policies" is served by several api groups: give its full name, one of policies.compute.infrapi.io, policies.legacy.infrapi.io
+```
+
+A group discovery doesn't know yet (registered, never synced) is taken as
+written in a full name: `secrets.vault.infrapi.io`, in `-n` when given.
+
+Every request is authenticated with the current context's own bearer token. Kayra
 itself never implements any of these APIs (see
 [API registrations](https://infrapi.github.io/kayra/architecture/api-registrations/)) — this is just
 the one HTTP convention every app following it shares, so one verb set
@@ -351,28 +377,28 @@ take the token from the current context with
 **infrapi-cli**
 
 ```bash
-# namespace-scoped: -n selects .../namespaces/<ns>/<resource>
-infrapi-cli get catalog -n thetenant subscriptions
+# namespaced: in -n, or the context's namespace
+infrapi-cli get subscriptions -n thetenant
 # No resources found.
-infrapi-cli create catalog -n thetenant subscriptions -d '{"api": "vault.infrapi.io"}'
+infrapi-cli create subscriptions -n thetenant -d '{"api": "vault.infrapi.io"}'
 # NAMESPACE  NAME               CREATED AT                 UPDATED AT
 # thetenant  vault.infrapi.io  2026-11-10T14:30:00+01:00  2026-11-10T14:30:00+01:00
-infrapi-cli get catalog -n thetenant subscriptions vault.infrapi.io -o json
+infrapi-cli get subscriptions -n thetenant vault.infrapi.io -o json
 # {"api": "vault.infrapi.io", "active": false, "state": "init", ...}
-infrapi-cli update catalog -n thetenant subscriptions vault.infrapi.io/sync -d '{}'
-infrapi-cli delete catalog -n thetenant subscriptions vault.infrapi.io
+infrapi-cli update subscriptions -n thetenant vault.infrapi.io/sync -d '{}'
+infrapi-cli delete subscriptions -n thetenant vault.infrapi.io
 # subscriptions "vault.infrapi.io" deleted
 
-# cluster-scoped: no -n, addresses .../<resource> directly
-infrapi-cli create catalog apiregistrations -d '{"name": "vault.infrapi.io", "short_name": "vault", "owner": "sre"}'
-infrapi-cli get catalog apiregistrations
-infrapi-cli create authorization clustergroups -d '{"name": "g", "metadata": {...}, "groups": [...]}'
+# cluster-scoped: addressed as .../<resource>, never in a namespace
+infrapi-cli create apiregistrations -d '{"name": "vault.infrapi.io", "short_name": "vault", "owner": "sre"}'
+infrapi-cli get apiregistrations
+infrapi-cli create clustergroups -d '{"name": "g", "metadata": {...}, "groups": [...]}'
 ```
 
 **curl**
 
 ```bash
-# namespace-scoped: -n selects .../namespaces/<ns>/<resource>
+# namespaced
 curl -s http://localhost:8080/apis/catalog.infrapi.io/v1/namespaces/thetenant/subscriptions \
   -H "Authorization: Bearer $TOKEN"
 # []
@@ -388,7 +414,7 @@ curl -s -X PUT http://localhost:8080/apis/catalog.infrapi.io/v1/namespaces/thete
 curl -s -X DELETE http://localhost:8080/apis/catalog.infrapi.io/v1/namespaces/thetenant/subscriptions/vault.infrapi.io \
   -H "Authorization: Bearer $TOKEN"
 
-# cluster-scoped: no -n, addresses .../<resource> directly
+# cluster-scoped
 curl -s -X POST http://localhost:8080/apis/catalog.infrapi.io/v1/apiregistrations \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"name": "vault.infrapi.io", "short_name": "vault", "owner": "sre"}'
@@ -409,17 +435,17 @@ the two) — there is no separate `list` verb. `create` is `POST`,
 `patch` all require a body. A sub-resource action is just part of
 `<name>` (`vault/sync` above — "PATCH .../vm/:id/reboot" in the
 general case, see
-[RBAC & auth](https://infrapi.github.io/kayra/architecture/rbac-and-auth/#authorizing-other-apps-requests)),
+[RBAC & auth](https://infrapi.github.io/kayra/architecture/rbac-and-auth/#who-decides)),
 never a separate argument.
 
 The response body is printed pretty-printed as-is — this never
 interprets or re-shapes it, since it has no idea what shape any given
-`<api>`'s own resource actually is. A non-2xx response still prints
+api's own resource actually is. A non-2xx response still prints
 the body (typically the same RFC 9457 problem-detail shape
 [`httpapi.Fail`](https://infrapi.github.io/kayra/packages/httpapi/) uses) and exits `1`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--namespace`, `-n` | — | the namespace to address — omit for a cluster-scoped resource |
+| `--namespace`, `-n` | the context's | the namespace of a namespaced resource; a cluster-scoped one has none |
 | `--data`, `-d` | — | request body, as a raw JSON string (`create`/`update`/`patch` only) |
 | `--filename`, `-f` | — | request body, read from a file — `-` for stdin (`create`/`update`/`patch` only) |
