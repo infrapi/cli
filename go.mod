@@ -7,7 +7,6 @@ require (
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/charmbracelet/colorprofile v0.4.3
-	github.com/infrapi/lib v0.16.0
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/urfave/cli/v3 v3.14.0
 	golang.org/x/net v0.62.0
