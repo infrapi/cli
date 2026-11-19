@@ -47,15 +47,18 @@ func run(ctx context.Context) error {
 
 	// Kayra answers who the caller is (cached) and whether they may act,
 	// on every request. Its URL is all there is to configure: the rest is
-	// in its /.well-known/kayra.json.
-	kayra, err := auth.NewClient(auth.ClientOptions{BaseURL: cfg.AuthURL})
+	// in its /.well-known/kayra.json. PublicURL makes the API a resource
+	// for OAuth clients, an MCP client say: a token of Kayra's
+	// authorization server must be for it, and a 401 names its metadata.
+	kayra, err := auth.NewClient(auth.ClientOptions{BaseURL: cfg.AuthURL, PublicURL: cfg.App.AppUrl})
 	if err != nil {
 		return err
 	}
 	// <root>/-/ (healthz, metrics, openapi.json, docs...) for each root, the
 	// contracts checked before any handler runs
 	engine, err := server.NewServerGin(cfg.App, api.Roots,
-		server.WithAuth(kayra.Middleware()), server.WithOpenAPI(api.Contracts()...))
+		server.WithAuth(kayra.Middleware()), server.WithOpenAPI(api.Contracts()...),
+		server.WithProtectedResource(kayra.AuthorizationServer))
 	if err != nil {
 		return err
 	}
