@@ -12,8 +12,9 @@ take an API from nothing to a tenant calling it:
 - **`infrapi-cli app`** writes and grows **your project**: a Go module on
   [infrapi/lib](https://github.com/infrapi/lib), its OpenAPI contract, its CI and
   release (`app init`), a resource added to the contract (`app add`), the Go code
-  generated from it (`app generate`), its registration in Kayra (`app register`).
-  What it writes is yours from then on: it never writes it again.
+  generated from it (`app generate`), the API run against the stack (`app run`),
+  its registration in Kayra (`app register`). What it writes is yours from then
+  on: it never writes it again.
 - **`infrapi-cli dev`** runs **a local InfraPI** to develop it against: Kayra
   authenticates and authorizes every request and reconciles subscriptions, APISIX
   routes Kayra and your API, etcd stores both. It runs on podman or docker,

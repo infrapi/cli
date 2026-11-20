@@ -64,7 +64,7 @@ defaults.
 | restart a container | `infrapi-cli dev restart kayra` |
 | get tokens, as `infrapi-cli` contexts | `infrapi-cli dev contexts` |
 | print one user's token | `infrapi-cli dev token --subject jdoe` |
-| run your API, with its rendered settings | `make run` (`.infrapi-dev/app.env`) |
+| run your API, with its rendered settings | `infrapi-cli app run` (`.infrapi-dev/app.env`) |
 | route my API through the gateway and register it in Kayra | `infrapi-cli app register` |
 | route an API through the gateway, or stop | `infrapi-cli dev api add [api [host:port]]`, `infrapi-cli dev api rm` |
 | stop the stack, keeping its data | `infrapi-cli dev down` |
@@ -110,7 +110,7 @@ and from templates infrapi-cli carries:
 | `apisix/config.yaml` | APISIX's configuration |
 | `apisix/routes.sh`, `routes/*.json` | the script `gateway-init` runs, and the gateway's own routes it loads |
 | `env` | the domain, image and ports, for compose |
-| `app.env` | your API's settings, as its `internal/config` reads them: `make run` |
+| `app.env` | your API's settings, as its `internal/config` reads them: `infrapi-cli app run` |
 | `.gitignore` | `*`: git ignores the whole directory |
 | `kayra/Dockerfile` | only to build Kayra from a checkout (`kayra.src`) |
 

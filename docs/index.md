@@ -14,8 +14,8 @@ InfraPI's command line, one binary for three things:
   `update`, `patch`, `delete`. It never reads a server's configuration:
   everything goes through the server's own API.
 - **Your API.** Create a Go project on infrapi/lib, add resources to its
-  OpenAPI contract, generate its code, register it in Kayra: `app init`,
-  `app add`, `app generate`, `app register`.
+  OpenAPI contract, generate its code, run it, register it in Kayra:
+  `app init`, `app add`, `app generate`, `app run`, `app register`.
 - **The dev stack.** Run a local InfraPI (Kayra, etcd and APISIX on
   podman or docker) to develop the API against: `dev init`, `dev up`,
   `dev contexts`, `dev logs`, `dev down`...

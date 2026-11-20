@@ -28,9 +28,8 @@ test: ## the tests
 build: ## bin/[[ .Name ]]
 	CGO_ENABLED=0 go build -trimpath -o bin/$(BINARY) ./cmd/$(BINARY)
 
-run: ## run it against the dev stack (infrapi-cli dev up), with .infrapi-dev/app.env
-	@infrapi-cli dev render >/dev/null || { echo "make run: .infrapi-dev/ is not dev.yaml's: infrapi-cli dev render shows the diff, infrapi-cli dev up --force applies it"; exit 1; }
-	INFRAPI_CONFIG_DOTENV_FILE=.infrapi-dev/app.env go run ./cmd/$(BINARY)
+run: ## run it against the dev stack, with .infrapi-dev/app.env (infrapi-cli app run)
+	infrapi-cli app run
 
 snapshot: ## every release artifact, locally, unpublished (goreleaser)
 	goreleaser release --snapshot --clean

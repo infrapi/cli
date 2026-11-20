@@ -31,7 +31,7 @@ infrapi-cli dev contexts      # dev-admin and dev-<user> contexts
 infrapi-cli app add vm        # a resource: its paths and schema, internal/[[ .Name ]]/vms.go
 $EDITOR api/[[ .Name ]]-v1.yaml      # its fields
 infrapi-cli app generate      # the Go code from the contract
-make run                      # the API, on :8080, with .infrapi-dev/app.env
+infrapi-cli app run           # the API, on :8080, with .infrapi-dev/app.env
 infrapi-cli app register      # registered in Kayra, routed by the gateway
 ```
 

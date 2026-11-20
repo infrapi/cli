@@ -174,7 +174,7 @@ A new file is only named (`kayra.yaml: new file`). The diff never prints a signi
 | `kayra.yaml`, `users.yaml` | Kayra's configuration and users, mounted into both Kayra services |
 | `keys/*.pem` | the signing keys, generated once and kept; `--new-keys` generates new ones, refusing every token minted before |
 | `routes/*.json`, `routes/removed` | the gateway's own routes, and the ids `dev.yaml` removes |
-| `app.env` | your API's settings, `dev.yaml`'s `app`: `make run` reads them |
+| `app.env` | your API's settings, `dev.yaml`'s `app`: `infrapi-cli app run` reads them |
 | `.gitignore` | `*`: git ignores the directory |
 | `compose.yaml`, `compose.docker.yaml` | the containers, compose's files |
 | `apisix/config.yaml`, `apisix/routes.sh` | APISIX's configuration (`gateway.config` merged in), and the script loading the routes |

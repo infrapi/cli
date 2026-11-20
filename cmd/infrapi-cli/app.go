@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/urfave/cli/v3"
 
@@ -25,7 +27,7 @@ import (
 func appCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "app",
-		Usage: "an API project on infrapi/lib: create it, add resources to its contract, generate its code, register it in Kayra",
+		Usage: "an API project on infrapi/lib: create it, add resources to its contract, generate its code, run it, register it in Kayra",
 		Commands: []*cli.Command{
 			{
 				Name:      "init",
@@ -62,6 +64,11 @@ func appCommand() *cli.Command {
 				Name:   "generate",
 				Usage:  "write the Go code from the contracts, api/*.yaml: api/zz_generated.go, internal/<name>/zz_generated.go",
 				Action: runAppGenerate,
+			},
+			{
+				Name:   "run",
+				Usage:  "run the API against the dev stack, with .infrapi-dev/app.env: go run ./cmd/<name>",
+				Action: runAppRun,
 			},
 			{
 				Name:  "register",
@@ -145,6 +152,26 @@ func runAppAdd(_ context.Context, cmd *cli.Command) error {
 	_, _ = fmt.Fprintf(out, "\n  %s: %s, each answering 501 until written.\n  %s: its fields in %s, then %s.\n\n",
 		ui.Bold("operations"), strings.Join(a.Ops, ", "), ui.Bold("next"), ui.Name(a.Contract), ui.Cmd("infrapi-cli app generate"))
 	return nil
+}
+
+func runAppRun(ctx context.Context, _ *cli.Command) error {
+	root, err := app.FindRoot(".")
+	if err != nil {
+		return err
+	}
+	// what it runs with is dev.yaml's: a stale .infrapi-dev/ is refused
+	if _, err := os.Stat(filepath.Join(root, dev.ConfigName)); err == nil {
+		s, err := dev.OpenStack(dev.StackOptions{Config: filepath.Join(root, dev.ConfigName)})
+		if err != nil {
+			return err
+		}
+		if _, err := s.Render(dev.RenderOptions{}); err != nil {
+			return fmt.Errorf("app run: %w: infrapi-cli dev up --force applies dev.yaml", err)
+		}
+	}
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return app.Run(ctx, root, os.Stdout)
 }
 
 func runAppGenerate(_ context.Context, _ *cli.Command) error {

@@ -40,7 +40,7 @@ Or take a release archive: see
 |---|---|---|
 | Go 1.27.3+ | builds and runs your API | `go version` |
 | podman 4.7+ **or** docker, with compose | runs the stack's containers | `podman compose version`, or `docker compose version` |
-| `make` | your project's targets: `make run`, `make test`... | `make --version` |
+| `make` | your project's targets: `make test`, `make lint`... | `make --version` |
 | `curl` | only for the `curl` examples of these docs | `curl --version` |
 
 podman is used when it is installed, docker otherwise. To use docker
@@ -104,7 +104,7 @@ stack runs into `.infrapi-dev/`, which git ignores:
   kayra.yaml         Kayra's configuration
   apisix/, routes/   the gateway's configuration and routes
   keys/              the keys Kayra signs tokens with
-  app.env            your API's settings: make run reads them
+  app.env            your API's settings: infrapi-cli app run reads them
 ```
 
 `dev.yaml` is the only file you edit. It holds Kayra's domain

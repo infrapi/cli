@@ -1,6 +1,6 @@
 ---
 title: app
-description: infrapi-cli app - create an API project on infrapi/lib, add resources to its contract, generate its Go code, and register it in Kayra.
+description: infrapi-cli app - create an API project on infrapi/lib, add resources to its contract, generate its Go code, run it, and register it in Kayra.
 weight: 35
 ---
 
@@ -19,7 +19,8 @@ and its release. What it writes is the project's from then on: only the
 |---|---|---|
 | `app init [name]` | creates the project in `./<name>`, its `dev.yaml` and its generated code | Go, then `go mod tidy` |
 | `app add <resource>` | adds a resource to the contract, generates, and writes its operations, 501 each | Go |
-| `app generate` | writes the Go code from the contracts: `api/zz_generated.go`, `internal/<name>/zz_generated.go` | Go; `make generate` runs it |
+| `app generate` | writes the Go code from the contracts: `api/zz_generated.go`, `internal/<name>/zz_generated.go` | Go |
+| `app run` | runs the API against the dev stack, with `.infrapi-dev/app.env` | `go run ./cmd/<name>` (`os/exec`) |
 | `app register` | routes the dev stack's gateway to the API, then registers it in Kayra | Go, APISIX's Admin API and Kayra's catalog |
 
 Every command but `init` works on the project the working directory is
@@ -61,7 +62,7 @@ compute/
 ```
 
 Then `go mod tidy`, when Go is installed, with the project's `GOPRIVATE`.
-The project starts on lib `v0.18.0` and Go 1.27.3.
+The project starts on lib `v0.19.0` and Go 1.27.3.
 
 ## app add
 
@@ -91,7 +92,7 @@ writes over `vms.go` or `vms_test.go`. With more than one contract,
 ## app generate
 
 ```bash
-infrapi-cli app generate     # or make generate, go generate ./...
+infrapi-cli app generate     # or go generate ./...
 ```
 
 It reads the contracts, `api/<name>-<version>.yaml`, and writes:
@@ -115,6 +116,18 @@ returns an `io.ReadCloser`, streamed with that media type.
 It refuses two path parameters of different names at the same place
 (`.../environments/{name}` beside `.../environments/{environment}/modules`):
 gin routes a place under one name, and would panic at start.
+
+## app run
+
+```bash
+infrapi-cli app run
+# + go run ./cmd/compute
+```
+
+Runs the API against the dev stack, `go run ./cmd/<name>`, with
+`.infrapi-dev/app.env` as `INFRAPI_CONFIG_DOTENV_FILE` and in its
+environment. It refuses a `.infrapi-dev/` that is not `dev.yaml`'s
+(`infrapi-cli dev up --force` applies it), and stops with Ctrl-C.
 
 ## app register
 

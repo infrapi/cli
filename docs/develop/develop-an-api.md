@@ -171,11 +171,11 @@ to the contract by hand is a compile error until written.
 In a second terminal:
 
 ```bash
-make run
+infrapi-cli app run
 # …	info	compute	serving	{"address": "0.0.0.0:8080", "roots": ["/apis/compute.infrapi.io/v1"], "auth": "http://localhost:9080"}
 ```
 
-`make run` runs `go run ./cmd/compute` with `.infrapi-dev/app.env`, its
+`infrapi-cli app run` runs `go run ./cmd/compute` with `.infrapi-dev/app.env`, its
 settings rendered from `dev.yaml`: infrapi/lib's `INFRAPI_APP_*`, and
 `COMPUTE_AUTH_URL`, Kayra's URL through the gateway. It listens on
 `0.0.0.0:8080` (`app.port`), for APISIX to reach it from its container.
@@ -447,7 +447,7 @@ func (s *Service) CreateVM(ctx context.Context, namespace string, body api.VM) (
 `infraerrors` is `github.com/infrapi/lib/pkg/errors`. A nil list is
 answered `[]`. `vms_test.go` expects 501 from every operation: change the
 two written ones to `http.StatusOK` and `http.StatusCreated`, then
-`make test`. Restart `make run`, and call it again:
+`make test`. Restart `infrapi-cli app run`, and call it again:
 
 **infrapi-cli**
 
@@ -485,7 +485,7 @@ A field, an operation or a resource more: change the contract (or
 ```bash
 infrapi-cli app generate   # the Go code from the contract
 go build ./...             # an operation not written yet is a compile error: write it in internal/compute
-infrapi-cli app register   # Kayra reads the spec again; restart make run first
+infrapi-cli app register   # Kayra reads the spec again; restart infrapi-cli app run first
 ```
 
 Then grant the new resource in a role, as in step 7. `infrapi-cli app
@@ -526,7 +526,7 @@ from the packages chosen:
 | image | Alpine, the binary, its settings from `/etc/compute/compute.env`; linux/amd64 and arm64 | the registry, `ghcr.io/acme/compute` |
 
 The packages and the image read a dotenv file, `/etc/compute/compute.env`,
-as `make run` reads `.infrapi-dev/app.env`: `packaging/compute.env` is its
+as `infrapi-cli app run` reads `.infrapi-dev/app.env`: `packaging/compute.env` is its
 template.
 
 **Private modules**: a module on a host the Go proxy can't read,
