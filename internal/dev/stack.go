@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -276,6 +277,7 @@ var sources = []struct{ prefix, from string }{
 	{"routes/", "domain, ports; a route changed, added or removed (null): gateway.routes.<id>. Your API's route: infrapi-cli dev api add"},
 	{"keys/", "kayra.keys.self, kayra.keys.local for keys of your own; --new-keys for new ones"},
 	{"apisix/config.yaml", "gateway.config"},
+	{"dex/", "users (password, attributes.email and name), ports.gateway, ports.kayra; idp.enabled: false for none"},
 	{"compose.yaml", "compose.config; or a compose.override.yaml beside dev.yaml, read after it"},
 	{"compose.docker.yaml", "none: it is infrapi-cli's; a compose.override.yaml beside dev.yaml is read after it"},
 	{"apisix/routes.sh", "none: it is infrapi-cli's; mount a script of your own from compose.override.yaml"},
@@ -360,6 +362,46 @@ func (s *Stack) Up(ctx context.Context, o RenderOptions) error {
 	if err != nil {
 		return err
 	}
+	return s.start(ctx, r, false)
+}
+
+// kayraServices are the services that run Kayra's image: kayra-dev:local,
+// built, when kayra.src is set.
+var kayraServices = []string{"gateway-init", "kayra", "reconciler"}
+
+// Update renders, pulls the stack's images again, a tag like latest moved
+// say, and starts the stack, every container recreated on its image as
+// pulled. With kayra.src set, Kayra's image is built instead: the other
+// services are pulled, and Kayra rebuilt.
+func (s *Stack) Update(ctx context.Context, o RenderOptions) error {
+	r, err := s.Render(o)
+	if err != nil {
+		return err
+	}
+	pull := []string{"pull"}
+	if s.Config.Kayra.Src != "" {
+		// compose.config and compose.override.yaml may add services
+		services, err := s.output(ctx, Cmd{Args: s.composeArgs("config", "--services"), Env: s.composeEnv()})
+		if err != nil {
+			return err
+		}
+		for _, sv := range strings.Fields(services) {
+			if !slices.Contains(kayraServices, sv) {
+				pull = append(pull, sv)
+			}
+		}
+	}
+	if len(pull) > 1 || s.Config.Kayra.Src == "" {
+		if err := s.run(ctx, Cmd{Args: s.composeArgs(pull...), Env: s.composeEnv()}); err != nil {
+			return err
+		}
+	}
+	return s.start(ctx, r, true)
+}
+
+// start builds when kayra.src is set and starts the stack: every container
+// recreated with all, else Kayra's three when what they read changed.
+func (s *Stack) start(ctx context.Context, r Rendered, all bool) error {
 	if s.Config.Kayra.Src != "" {
 		if err := s.Build(ctx); err != nil {
 			return err
@@ -370,23 +412,63 @@ func (s *Stack) Up(ctx context.Context, o RenderOptions) error {
 	if err != nil {
 		running = ""
 	}
-	if err := s.run(ctx, Cmd{Args: s.composeArgs("up", "-d"), Env: s.composeEnv()}); err != nil {
+	up := []string{"up", "-d"}
+	if all {
+		up = append(up, "--force-recreate")
+	}
+	if err := s.run(ctx, Cmd{Args: s.composeArgs(up...), Env: s.composeEnv()}); err != nil {
 		return err
 	}
-	if running != "" && r.Kayra {
-		_, _ = fmt.Fprintf(ui.Writer(s.stdout), "up: %s changed: %s\n", ConfigName, ui.Warn("recreating kayra, reconciler and gateway-init"))
-		if err := s.run(ctx, Cmd{Args: s.composeArgs("up", "-d", "--force-recreate", "--no-deps", "kayra", "reconciler", "gateway-init"), Env: s.composeEnv()}); err != nil {
+	if running != "" && r.Kayra && !all {
+		_, _ = fmt.Fprintf(ui.Writer(s.stdout), "up: %s changed: %s\n", ConfigName, ui.Warn("recreating kayra, reconciler, gateway-init and dex"))
+		recreate := []string{"up", "-d", "--force-recreate", "--no-deps", "kayra", "reconciler", "gateway-init"}
+		if s.Config.Login() {
+			recreate = append(recreate, "dex") // its users, dex/config.yaml
+		}
+		if err := s.run(ctx, Cmd{Args: s.composeArgs(recreate...), Env: s.composeEnv()}); err != nil {
 			return err
 		}
 	}
 	p := s.Config.Ports
 	// the pages worth opening: a click on each shows something
-	url := func(port int, path string) string { return ui.URL(fmt.Sprintf("http://localhost:%d%s", port, path)) }
-	_, _ = fmt.Fprintf(ui.Writer(s.stdout), "\n  %s   %s   %s %s   %s %s\n  %s   %s\n",
-		ui.Bold("Kayra"), url(p.Kayra, wellKnown), ui.Bold("gateway"), url(p.Gateway, wellKnown),
-		ui.Bold("APISIX Admin API"), url(p.Admin, "/ui/"),
-		ui.Bold("next:"), ui.Cmd("infrapi-cli dev contexts"))
+	url := func(port int, path string) string { return fmt.Sprintf("http://localhost:%d%s", port, path) }
+	links := [][2]string{
+		{"Kayra", url(p.Kayra, wellKnown)},
+		{"gateway", url(p.Gateway, wellKnown)},
+		{"APISIX Admin API", url(p.Admin, "/ui/")},
+	}
+	if s.Config.Login() {
+		links = append(links, [2]string{"Dex", s.Config.DexIssuer() + "/.well-known/openid-configuration"})
+	}
+	out := ui.Writer(s.stdout)
+	_, _ = fmt.Fprintln(out)
+	for _, l := range links {
+		// padded before styling: the escapes would count
+		_, _ = fmt.Fprintf(out, "  %s %s\n", ui.Bold(fmt.Sprintf("%-17s", l[0])), ui.URL(l[1]))
+	}
+	_, _ = fmt.Fprintf(out, "\n  %s %s\n  %s %s\n", ui.Bold(fmt.Sprintf("%-17s", "next:")), ui.Cmd("infrapi-cli dev contexts"),
+		ui.Bold(fmt.Sprintf("%-17s", "or:")), ui.Cmd(fmt.Sprintf("infrapi-cli auth login --server http://localhost:%d", p.Gateway)))
+	if s.Config.Login() && len(s.Config.Users) > 0 {
+		s.printAccounts()
+	}
 	return nil
+}
+
+// printAccounts lists the accounts to log in with at the stack's Dex:
+// dev.yaml's users, with their passwords, the stack's only.
+func (s *Stack) printAccounts() {
+	out := ui.Writer(s.stdout)
+	_, _ = fmt.Fprintf(out, "\n  %s, to log in at Dex:\n\n", ui.Bold("accounts"))
+	rows := make([][]string, 0, len(s.Config.Users))
+	for _, u := range s.Config.Users {
+		groups := strings.Join(u.Groups, ", ")
+		if groups == "" {
+			groups = "-"
+		}
+		rows = append(rows, []string{"  " + u.email(), u.password(), groups})
+	}
+	_ = ui.Table(out, []string{"  E-MAIL", "PASSWORD", "GROUPS"}, rows, nil)
+	_, _ = fmt.Fprintln(out)
 }
 
 // wellKnown is Kayra's discovery document, the first page to open.

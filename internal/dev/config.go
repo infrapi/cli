@@ -40,6 +40,17 @@ type Config struct {
 		} `yaml:"keys"`
 	} `yaml:"kayra"`
 
+	// IdP is the stack's identity provider, Dex: infrapi-cli auth login
+	// logs the users in there, at <gateway>/dex, their password their
+	// users.password (their id when empty).
+	IdP struct {
+		// Enabled is true when unset: false leaves the login to a provider
+		// of your own, set in kayra.config.
+		Enabled *bool `yaml:"enabled"`
+		// Image is Dex's.
+		Image string `yaml:"image"`
+	} `yaml:"idp"`
+
 	Gateway struct {
 		// Config is merged into APISIX's config.yaml, as Kayra's config.
 		Config yaml.Node `yaml:"config"`
@@ -145,6 +156,11 @@ func (c *Config) check() error {
 	def(&c.Region, "eu-west-1")
 	def(&c.Location, "dc1")
 	def(&c.Kayra.Image, "ghcr.io/infrapi/kayra:latest")
+	def(&c.IdP.Image, DexImage)
+	if c.IdP.Enabled == nil {
+		on := true
+		c.IdP.Enabled = &on
+	}
 	defInt(&c.Ports.Kayra, 8081)
 	defInt(&c.Ports.Gateway, 9080)
 	defInt(&c.Ports.GatewayTLS, 9443)
@@ -231,6 +247,12 @@ func (c *Config) checkOverrides() error {
 	}
 	return nil
 }
+
+// DexImage is the stack's identity provider's image, by default.
+const DexImage = "ghcr.io/dexidp/dex:v2.46.1"
+
+// Login tells whether the stack runs its identity provider.
+func (c *Config) Login() bool { return c.IdP.Enabled == nil || *c.IdP.Enabled }
 
 // FullAPI is an API's full name: name itself when it has a dot,
 // <name>.<domain> otherwise.

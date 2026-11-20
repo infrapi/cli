@@ -33,7 +33,7 @@ import (
 
 // version is set at build time via -ldflags "-X main.version=..." —
 // see .goreleaser.yaml. "dev" is what `go build`/`go run` without
-// that flag leaves it at.
+// that flag leaves it at: buildVersion adds the commit.
 var version = "dev"
 
 func main() {
@@ -51,7 +51,7 @@ func newRoot() *cli.Command {
 	return &cli.Command{
 		Name:    "infrapi-cli",
 		Usage:   "InfraPI's command line: log in to Kayra and call its API, and run a local dev stack",
-		Version: version,
+		Version: buildVersion(),
 		// inherited by every command, before or after it: a context for this
 		// one call, the saved current one left as it is
 		Flags: []cli.Flag{

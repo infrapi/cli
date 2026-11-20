@@ -1,8 +1,8 @@
 # Kayra's configuration in the dev stack, rendered by `infrapi-cli dev render`
-# from dev.yaml: do not edit, edit dev.yaml and run make render. The
-# signing keys are .infrapi-dev/keys/*.pem, generated once and kept (make
-# render NEW_KEYS=1 for new ones). Nothing here reaches outside the
-# stack's network: no OIDC provider, no LDAP, no proxy.
+# from dev.yaml: do not edit, edit dev.yaml (infrapi-cli dev render shows the
+# diff). The signing keys are .infrapi-dev/keys/*.pem, generated once and
+# kept (infrapi-cli dev render --new-keys for new ones). Nothing here reaches outside the
+# stack's network: its OIDC provider is the stack's Dex, no LDAP.
 
 app:
   name: "kayra"
@@ -38,6 +38,22 @@ authorizations:
       path: /etc/kayra/kayra-users.yaml
 
 authentifications:
+[[- if .Login ]]
+  # The stack's Dex, dev.yaml's users: infrapi-cli auth login logs them in
+  # there, their groups resolved from dev.yaml. The browser and Kayra reach
+  # it at the same URL, Kayra through APISIX as its proxy.
+  dev:
+    authorization: users
+    remote:
+      enabled: true
+      url: "[[ .DexIssuer ]]/.well-known/openid-configuration"
+      proxy: "http://apisix:9080"
+      claims:
+        aud: [[ .DexClient ]]
+      user_id: {from: token, field: preferred_username}
+      oauth2:
+        client_id: [[ .DexClient ]]
+[[- end ]]
   # Bootstrap and ad hoc tokens, any groups:
   #   kayra token mint --provider self --group [[ index .SysadminGroups 0 ]]
   self:
@@ -92,3 +108,12 @@ reconciler:
           - key: .status
             successes: [done]
             failures: [failed, canceled]
+[[- if .Login ]]
+
+# Kayra's authorization server: infrapi-cli auth login, an MCP client...
+# get tokens of Kayra's own there, for Kayra and the APIs behind the
+# gateway.
+oauth2:
+  enabled: true
+  resources: ["http://localhost:[[ .Ports.Kayra ]]", "http://localhost:[[ .Ports.Gateway ]]"]
+[[- end ]]

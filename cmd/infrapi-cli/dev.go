@@ -68,6 +68,14 @@ func devCommand() *cli.Command {
 					return s.Up(ctx, dev.RenderOptions{NewKeys: cmd.Bool("new-keys"), Force: cmd.Bool("force")})
 				}),
 			},
+			{
+				Name:  "update",
+				Usage: "pull the stack's images again (Kayra's latest, say), then recreate its containers on them; with kayra.src, rebuild Kayra instead of pulling it",
+				Flags: []cli.Flag{newKeysFlag(), forceFlag()},
+				Action: withStack(func(ctx context.Context, cmd *cli.Command, s *dev.Stack) error {
+					return s.Update(ctx, dev.RenderOptions{NewKeys: cmd.Bool("new-keys"), Force: cmd.Bool("force")})
+				}),
+			},
 			composeCommand("down", "stop the stack, keep etcd's data", "down"),
 			composeCommand("clean", "stop the stack and wipe etcd: Kayra's objects and APISIX's routes", "down", "-v"),
 			{

@@ -61,6 +61,12 @@ kayra:
 #         image: docker.io/mockserver/mockserver
 #         networks: [infrapi]
 
+# The stack's identity provider, Dex, at http://localhost:9080/dex: Kayra
+# logs the users below in there (infrapi-cli auth login).
+idp:
+  image: [[ .DexImage ]]
+  # enabled: false     # no Dex: log in at a provider of your own, set in kayra.config
+
 # Where the stack listens, on 127.0.0.1.
 ports:
   kayra: 8081        # Kayra, directly
@@ -77,9 +83,11 @@ ports:
 sysadmin_groups:
   - [[ .Platform ]]-core-sysadmin
 
-# The users of Kayra's "local" provider, a stand-in for LDAP: a token
-# minted for one (infrapi-cli dev token --subject <id>) gets its groups
-# from here.
+# The users of the stack, a stand-in for a company directory: Kayra
+# reads their groups from here. infrapi-cli auth login --server
+# http://localhost:9080 logs one in at the stack's Dex, with its e-mail and
+# its password (its id unless set: password: ...); infrapi-cli dev contexts
+# mints a token for each, without a login.
 users:
   - id: admin
     attributes: {email: admin@example.com, name: Dev Admin}

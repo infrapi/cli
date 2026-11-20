@@ -23,6 +23,7 @@ file, `dev.yaml`, an API project's (`infrapi-cli app init`, see [app](app.md)).
 | `dev render [--new-keys] [--force]` | shows what `dev.yaml` changes in `.infrapi-dev/`, as a diff; `--force` writes it | Go |
 | `dev build` | builds `kayra-dev:local` from `kayra.src` | `podman build --format docker`, or `docker build` |
 | `dev up [--new-keys] [--force]` | renders, builds if `kayra.src` is set, starts the stack; stops on a change to `.infrapi-dev/` without `--force` | `<engine> compose up -d` |
+| `dev update [--new-keys] [--force]` | renders, pulls the images again, starts the stack with every container recreated on them; with `kayra.src`, builds Kayra's instead of pulling it | `compose pull`, `compose up -d --force-recreate` |
 | `dev down` | stops the stack, keeps etcd's data | `compose down` |
 | `dev clean` | stops it and wipes etcd | `compose down -v` |
 | `dev reset-kayra` | wipes Kayra's objects only, keeps the routes and keys | `compose exec etcd etcdctl del --prefix /kayra`, `compose restart kayra reconciler` |
@@ -109,12 +110,51 @@ infrapi-cli dev up [--new-keys] [--force]
 It renders `.infrapi-dev/` (see [dev render](#dev-render)), builds
 `kayra-dev:local` when `kayra.src` is set, and starts the stack. When the
 stack was running and the render changed what Kayra, its reconciler or
-`gateway-init` read (`kayra.yaml`, `users.yaml`, the routes), it recreates
-those three: compose alone would not, since only a file they mount changed.
+`gateway-init` read (`kayra.yaml`, `users.yaml`, the routes, Dex's
+`dex/config.yaml`), it recreates those three and `dex`: compose alone would
+not, since only a file they mount changed.
+
+It ends on the stack's links, what to run next, and the accounts to log
+in with at Dex (`infrapi-cli auth login`), `dev.yaml`'s users:
+
+```text
+  Kayra             http://localhost:8081/.well-known/kayra.json
+  gateway           http://localhost:9080/.well-known/kayra.json
+  APISIX Admin API  http://localhost:9180/ui/
+  Dex               http://localhost:9080/dex/.well-known/openid-configuration
+
+  next:             infrapi-cli dev contexts
+  or:               infrapi-cli auth login --server http://localhost:9080
+
+  accounts, to log in at Dex:
+
+  E-MAIL              PASSWORD  GROUPS
+  admin@example.com   admin     sandbox-core-sysadmin
+  jdoe@example.com    jdoe      sandbox-thetenant-admins
+  nobody@example.com  nobody    -
+```
 
 Without `--force`, a render that would change a file in `.infrapi-dev/`,
 from `dev.yaml` or from an edit made there by hand, is canceled before
 anything starts: see [dev render](#dev-render).
+
+## dev update
+
+```bash
+infrapi-cli dev update [--new-keys] [--force]
+# + podman compose --env-file .infrapi-dev/env -f .infrapi-dev/compose.yaml pull
+# + podman compose --env-file .infrapi-dev/env -f .infrapi-dev/compose.yaml ps -q
+# + podman compose --env-file .infrapi-dev/env -f .infrapi-dev/compose.yaml up -d --force-recreate
+```
+
+`dev up` pulls an image only when it is missing: a tag that moved, Kayra's
+`latest` say, stays as first pulled. `dev update` pulls every image of the
+stack again, then starts it as `dev up` does, every container recreated on
+its image as pulled. etcd's data, the keys and your contexts are kept.
+
+With `kayra.src` set, Kayra's image is built, not pulled: it pulls the
+other services', then builds `kayra-dev:local` again. The render is `dev
+up`'s: without `--force`, a change to `.infrapi-dev/` cancels it.
 
 ## dev render
 
@@ -174,6 +214,7 @@ A new file is only named (`kayra.yaml: new file`). The diff never prints a signi
 | `kayra.yaml`, `users.yaml` | Kayra's configuration and users, mounted into both Kayra services |
 | `keys/*.pem` | the signing keys, generated once and kept; `--new-keys` generates new ones, refusing every token minted before |
 | `routes/*.json`, `routes/removed` | the gateway's own routes, and the ids `dev.yaml` removes |
+| `dex/config.yaml` | the identity provider, Dex: `dev.yaml`'s users and their passwords (hashed), its client for Kayra |
 | `app.env` | your API's settings, `dev.yaml`'s `app`: `infrapi-cli app run` reads them |
 | `.gitignore` | `*`: git ignores the directory |
 | `compose.yaml`, `compose.docker.yaml` | the containers, compose's files |

@@ -105,7 +105,7 @@ func TestOverride_routes(t *testing.T) {
 	for _, e := range entries {
 		names = append(names, e.Name())
 	}
-	if got := strings.Join(names, " "); got != "00-kayra.json 01-openapi-stub.json 02-hooks.json 03-healthz.json 04-mine.json removed" {
+	if got := strings.Join(names, " "); got != "00-kayra.json 01-openapi-stub.json 02-hooks.json 03-healthz.json 04-dex.json 05-mine.json removed" {
 		t.Fatalf("routes: %s", got)
 	}
 	if got := read(t, filepath.Join(dir, "routes", "removed")); got != "httpbin\n" {
@@ -119,7 +119,7 @@ func TestOverride_routes(t *testing.T) {
 	if mocking["response_example"] != `{"status":"failed"}` || mocking["response_status"] != float64(200) || hooks["uri"] != "/hooks/*" {
 		t.Errorf("hooks: %v", hooks)
 	}
-	if !strings.Contains(read(t, filepath.Join(dir, "routes", "04-mine.json")), `"host.containers.internal:9000": 1`) {
+	if !strings.Contains(read(t, filepath.Join(dir, "routes", "05-mine.json")), `"host.containers.internal:9000": 1`) {
 		t.Error("mine's upstream")
 	}
 }
@@ -138,7 +138,7 @@ func TestOverride_routesCommand(t *testing.T) {
 	if err := s.Routes(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(calls, ","); got != "PUT kayra,PUT openapi-stub,PUT hooks,PUT healthz,PUT mine,DELETE httpbin" {
+	if got := strings.Join(calls, ","); got != "PUT kayra,PUT openapi-stub,PUT hooks,PUT healthz,PUT dex,PUT mine,DELETE httpbin" {
 		t.Errorf("calls: %s", got)
 	}
 }
@@ -283,7 +283,7 @@ func TestOverride_keep(t *testing.T) {
 	for _, e := range entries {
 		routes[e.Name()] = read(t, filepath.Join(dir, "routes", e.Name()))
 	}
-	for name, want := range map[string]string{"03-healthz.json": `"uri": "/health"`, "04-extra.json": `"uri": "/extra"`, "05-mine.json": `"uri": "/mine/*"`} {
+	for name, want := range map[string]string{"03-healthz.json": `"uri": "/health"`, "05-extra.json": `"uri": "/extra"`, "06-mine.json": `"uri": "/mine/*"`} {
 		if !strings.Contains(routes[name], want) {
 			t.Errorf("routes/%s misses %q: %v", name, want, routes)
 		}

@@ -46,6 +46,7 @@ them.
 | `apisix` | the gateway | `127.0.0.1:9080`; its Admin API and UI `127.0.0.1:9180` |
 | `etcd` | the store of Kayra (`/kayra`) and of the gateway (`/apisix`) | `127.0.0.1:2379` |
 | `gateway-init` | loads the gateway's routes at start, then exits | - |
+| `dex` | the identity provider: `infrapi-cli auth login` logs `dev.yaml`'s users in there | through the gateway, `/dex/*` |
 | `httpbin` | an upstream to try gateway routes on | through the gateway, `/httpbin/*` |
 
 Every port is bound to `127.0.0.1` only: the stack's keys are known, nothing
@@ -59,6 +60,7 @@ defaults.
 | check what is needed is installed | `infrapi-cli dev doctor` |
 | start the stack | `infrapi-cli dev up` |
 | see what a change to `dev.yaml` does, then apply it | `infrapi-cli dev render`, then `infrapi-cli dev up --force` |
+| run the latest Kayra, every image pulled again | `infrapi-cli dev update` |
 | see if it answers | `infrapi-cli dev health` |
 | see the containers, follow their logs | `infrapi-cli dev ps`, `infrapi-cli dev logs [kayra]` |
 | restart a container | `infrapi-cli dev restart kayra` |
@@ -94,6 +96,7 @@ from what `dev.yaml` renders, it shows the diff and stops.
 | `ports` | where the stack listens | `8081`, `9080`, `9180`... |
 | `sysadmin_groups` | the groups Kayra's cluster endpoints require: namespaces, API registrations, cluster RBAC | `sandbox-core-sysadmin` |
 | `users` | the users you can be, see [Users and tokens](#users-and-tokens) | `admin`, `jdoe`, `nobody` |
+| `idp` | the identity provider, Dex: its `image`, or `enabled: false` for none | `ghcr.io/dexidp/dex:v2.46.1` |
 | `app` | your API: its group, the port it listens on, on your machine, and its settings (`app.env`) | written by `app init`: its group, `8080` |
 
 A mistake is caught before anything starts: an unknown key, a malformed
@@ -236,18 +239,48 @@ services:
 
 ## Users and tokens
 
-The stack has no identity provider: Kayra signs its tokens itself, with the
-keys in `.infrapi-dev/keys/`. There is no password and no
-`infrapi-cli auth login` here, the tokens come from Kayra directly.
-
 The users are `dev.yaml`'s, a stand-in for a company directory: Kayra
-reads a token's groups from there.
+reads a token's groups from there. There are two ways to be one:
+
+- **Log in**, as on a real Kayra: `infrapi-cli auth login` sends your
+  browser to the stack's identity provider, Dex, where you log in with the
+  user's e-mail and password. Kayra then gives `infrapi-cli` tokens of its
+  own, renewed until you log out.
+- **Without a login**: `infrapi-cli dev contexts` asks Kayra for a token
+  for each user, signed with the keys in `.infrapi-dev/keys/`.
 
 | User | Groups | Who it plays |
 |---|---|---|
 | `admin` | `sandbox-core-sysadmin` | the platform's administrator |
 | `jdoe` | `sandbox-thetenant-admins` | a tenant's user: allowed what the tenant's RBAC grants that group |
 | `nobody` | none | someone authenticated, authorized for nothing |
+
+### Log in
+
+```bash
+infrapi-cli auth login --server http://localhost:9080
+# a browser opens on Dex: jdoe@example.com, password jdoe
+infrapi-cli auth whoami
+# groups:         sandbox-thetenant-admins
+# sub:            jdoe
+```
+
+`infrapi-cli dev up` ends on the accounts, e-mail, password and groups.
+A user's password is its id, `jdoe` for `jdoe`, unless `dev.yaml` sets
+one, `password:` beside its `id`; its e-mail is `attributes.email`, or
+`<id>@example.com`. `--no-browser` prints the URL instead, and asks for the
+code the page shows. `infrapi-cli auth sessions` lists the logins Kayra
+holds, `infrapi-cli auth logout` ends yours.
+
+Dex is behind the gateway, at `http://localhost:9080/dex`: the browser
+logs in there, and Kayra, in its container, reaches the same URL with
+APISIX as its proxy (`authentifications.dev.remote.proxy` in
+`kayra.yaml`), so both see one issuer. Its configuration is rendered into
+`.infrapi-dev/dex/config.yaml`; `idp.enabled: false` in `dev.yaml` removes
+it, to log in at a provider of your own set in `kayra.config` (an
+`authentifications.<name>` with `remote.oauth2`, and `oauth2.enabled`).
+
+### Without a login
 
 `infrapi-cli dev contexts` gets a token for each, valid 8 hours, and saves
 it as an infrapi-cli context on the gateway: `dev-jdoe`, `dev-nobody`, and
@@ -374,12 +407,14 @@ The reconcile pipeline, say, is `kayra.config.reconciler.mode.dev`.
 `infrapi-cli dev up --force` renders it again, with the same keys, and
 restarts both Kayra containers.
 
-Kayra has two token providers, both signing with the stack's keys:
+Kayra has two token providers signing with the stack's keys, and one to
+log in at:
 
-| Provider | Groups come from | Mint by hand, in the `kayra` container |
+| Provider | Groups come from | Tokens |
 |---|---|---|
-| `self` | the token itself | `kayra token mint --provider self --group <group>` |
-| `local` | `dev.yaml`'s `users` | `kayra token mint --provider local --subject <id>` |
+| `self` | the token itself | `kayra token mint --provider self --group <group>`, in the `kayra` container; and the logins' tokens, Kayra's authorization server's (`oauth2`) |
+| `local` | `dev.yaml`'s `users` | `kayra token mint --provider local --subject <id>`, in the `kayra` container |
+| `dev` | `dev.yaml`'s `users` | none of its own: the stack's Dex, where `infrapi-cli auth login` logs a user in |
 
 ### The reconcile pipeline
 

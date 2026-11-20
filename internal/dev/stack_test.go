@@ -35,6 +35,8 @@ func (r *recorder) exec(_ context.Context, c Cmd, _, _ io.Writer) (string, error
 			return "abc123\n", nil
 		}
 		return "", nil
+	case strings.HasSuffix(line, "config --services"):
+		return "etcd\napisix\ngateway-init\nkayra\nreconciler\nhttpbin\n", nil
 	case strings.Contains(line, "token mint"):
 		return "token-for-" + line[strings.LastIndex(line, " ")+1:] + "\n", nil
 	}
@@ -71,12 +73,36 @@ func testStack(t *testing.T, devYAML string, o StackOptions) (*Stack, *recorder)
 	return s, rec
 }
 
+// Up ends on the accounts to log in with at Dex; none without it.
+func TestUp_accounts(t *testing.T) {
+	for _, idp := range []string{"", "idp: {enabled: false}\n"} {
+		s, _ := testStack(t, dexUsers+idp, StackOptions{})
+		var out strings.Builder
+		s.stdout = &out
+		if err := s.Up(context.Background(), RenderOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		got := out.String()
+		if idp != "" {
+			if strings.Contains(got, "PASSWORD") {
+				t.Errorf("accounts without Dex:\n%s", got)
+			}
+			continue
+		}
+		for _, want := range []string{"Dex               http://localhost:9080/dex/.well-known/openid-configuration", "jdoe@example.com  jdoe      g", "ops@example.com   s3cret    -"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("up printed no %q:\n%s", want, got)
+			}
+		}
+	}
+}
+
 // Up recreates Kayra, its reconciler and gateway-init only when they were
 // running and what they read changed.
 func TestUp_recreatesOnlyOnChange(t *testing.T) {
 	s, rec := testStack(t, "", StackOptions{})
 	ctx := context.Background()
-	recreate := "--force-recreate --no-deps kayra reconciler gateway-init"
+	recreate := "--force-recreate --no-deps kayra reconciler gateway-init dex"
 
 	var out strings.Builder
 	s.stdout = &out
@@ -116,6 +142,36 @@ func TestUp_recreatesOnlyOnChange(t *testing.T) {
 	}
 	if rec.cmds[0].Dir != s.Dir {
 		t.Errorf("compose runs in %s, want the stack's dir %s", rec.cmds[0].Dir, s.Dir)
+	}
+}
+
+// Update pulls every image and recreates every container; with kayra.src,
+// it pulls the others, and builds Kayra's.
+func TestUpdate(t *testing.T) {
+	compose := "podman compose --env-file .infrapi-dev/env -f .infrapi-dev/compose.yaml "
+	s, rec := testStack(t, "", StackOptions{})
+	s.stdout = io.Discard
+	if err := s.Update(context.Background(), RenderOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{compose + "pull", compose + "ps -q", compose + "up -d --force-recreate"}
+	if got := rec.lines(); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("update ran\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "go.mod"), []byte("module github.com/infrapi/kayra\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, rec = testStack(t, "kayra:\n  src: "+src+"\n", StackOptions{})
+	s.stdout = io.Discard
+	if err := s.Update(context.Background(), RenderOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	lines := rec.lines()
+	if len(lines) != 5 || lines[1] != compose+"pull etcd apisix httpbin" || !strings.Contains(lines[2], "-t kayra-dev:local") ||
+		lines[4] != compose+"up -d --force-recreate" {
+		t.Fatalf("update with kayra.src ran\n%s", strings.Join(lines, "\n"))
 	}
 }
 
@@ -225,7 +281,7 @@ func TestRoutes(t *testing.T) {
 	if err := s.Routes(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(put, ",") != "PUT kayra,PUT openapi-stub,PUT hooks,PUT healthz,PUT httpbin" {
+	if strings.Join(put, ",") != "PUT kayra,PUT openapi-stub,PUT hooks,PUT healthz,PUT httpbin,PUT dex" {
 		t.Errorf("put: %v", put)
 	}
 }

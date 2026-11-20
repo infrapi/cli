@@ -146,10 +146,20 @@ They work from any directory of the project.
 
 ## 6. Log in
 
-On a real Kayra you log in with `infrapi-cli auth login --server <url>`: your
-browser goes through the server's identity provider. The dev stack has no
-identity provider, so Kayra signs the tokens itself. `infrapi-cli dev contexts` asks it
-for three, and saves each as an `infrapi-cli` context:
+Log in as on a real Kayra: your browser goes to the stack's identity
+provider, where you log in as one of `dev.yaml`'s users, with its e-mail
+and its password, its id:
+
+```bash
+infrapi-cli auth login --server http://localhost:9080
+# a browser opens: jdoe@example.com, password jdoe
+infrapi-cli auth whoami
+# groups:         sandbox-thetenant-admins
+# sub:            jdoe
+```
+
+To switch users without a browser, `infrapi-cli dev contexts` asks Kayra
+for a token for each, and saves each as an `infrapi-cli` context:
 
 ```bash
 infrapi-cli dev contexts

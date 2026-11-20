@@ -115,6 +115,18 @@ services:
     networks:
       - infrapi
 
+  # the stack's identity provider: infrapi-cli auth login logs dev.yaml's
+  # users in there, through the gateway at /dex; Kayra reaches it the same
+  # way, APISIX its proxy (kayra.yaml's authentifications.dev)
+  dex:
+    image: ${DEX_IMAGE}
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    volumes:
+      - ./dex/config.yaml:/etc/dex/config.yaml:ro,z
+    restart: always
+    networks:
+      - infrapi
+
   # an upstream to try routes and plugins on, at /httpbin/* through APISIX
   httpbin:
     image: docker.io/kennethreitz/httpbin

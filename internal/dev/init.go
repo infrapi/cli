@@ -64,7 +64,7 @@ func WriteConfig(path string, a Answers) error {
 	var b bytes.Buffer
 	if err := t.Execute(&b, map[string]any{
 		"Domain": a.Domain, "Platform": a.Platform, "Region": a.Region, "Image": a.Image,
-		"API": a.API, "Port": a.Port, "AppName": AppName(a.API),
+		"API": a.API, "Port": a.Port, "AppName": AppName(a.API), "DexImage": DexImage,
 	}); err != nil {
 		return err
 	}

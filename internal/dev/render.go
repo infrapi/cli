@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"text/template"
@@ -38,6 +39,7 @@ const keyIndent = "          "
 //	routes/*.json the gateway's own routes, loaded by apisix/routes.sh
 //	app.env       the API's settings, as infrapi/lib reads them (app.port...)
 //	.gitignore    the whole directory, for git
+//	dex/config.yaml  Dex, the identity provider: dev.yaml's users
 //	keys/*.pem    the signing keys, generated when missing or when NewKeys
 //	compose.yaml, compose.docker.yaml, apisix/config.yaml, apisix/routes.sh,
 //	kayra/Dockerfile: the stack itself, from templates/stack, gateway.config
@@ -154,6 +156,11 @@ func plan(c *Config, dir string, newKeys bool) (*rendering, error) {
 		// git ignores the directory: it is rendered, and has keys
 		".gitignore": []byte("# Rendered by infrapi-cli dev render: the whole directory is.\n*\n"),
 	}
+	if c.Login() {
+		if files[dexConfig], err = renderDex(c, dir); err != nil {
+			return nil, err
+		}
+	}
 	if err := stackFiles(c, files); err != nil {
 		return nil, err
 	}
@@ -232,7 +239,7 @@ func (pl *rendering) apply(dir string) error {
 		return err
 	}
 	// read by the containers as another user than their owner
-	for _, sub := range []string{"routes", "apisix", "kayra"} {
+	for _, sub := range []string{"routes", "apisix", "kayra", "dex"} {
 		d := filepath.Join(dir, sub)
 		if err := os.MkdirAll(d, 0o755); err != nil { //#nosec G301 -- see above
 			return err
@@ -342,9 +349,21 @@ func stackFiles(c *Config, files map[string][]byte) error {
 				return fmt.Errorf("apisix/config.yaml: %w", err)
 			}
 		}
-		if rel == "compose.yaml" && c.Compose.Config.Kind == yaml.MappingNode {
-			if data, err = mergeYAML(data, &c.Compose.Config); err != nil {
-				return fmt.Errorf("compose.yaml: %w", err)
+		if rel == "compose.yaml" {
+			if !c.Login() {
+				// no identity provider: no dex service
+				var none yaml.Node
+				if err := yaml.Unmarshal([]byte("services: {dex: null}"), &none); err != nil {
+					return err
+				}
+				if data, err = mergeYAML(data, none.Content[0]); err != nil {
+					return fmt.Errorf("compose.yaml: %w", err)
+				}
+			}
+			if c.Compose.Config.Kind == yaml.MappingNode {
+				if data, err = mergeYAML(data, &c.Compose.Config); err != nil {
+					return fmt.Errorf("compose.yaml: %w", err)
+				}
 			}
 		}
 		files[rel] = data
@@ -430,8 +449,8 @@ func renderKayra(c *Config, selfKey, localKey []byte) ([]byte, error) {
 	var out bytes.Buffer
 	err = tmpl.Execute(&out, struct {
 		*Config
-		SelfKey, LocalKey string
-	}{c, indent(selfKey), indent(localKey)})
+		SelfKey, LocalKey, DexClient string
+	}{c, indent(selfKey), indent(localKey), DexClient})
 	if err != nil {
 		return nil, err
 	}
@@ -456,6 +475,7 @@ func envFile(c *Config) string {
 		{"DEV_PLATFORM", c.Platform},
 		{"KAYRA_IMAGE", image},
 		{"KAYRA_PULL_POLICY", pull},
+		{"DEX_IMAGE", c.IdP.Image},
 		{"KAYRA_SRC", c.Kayra.Src},
 		{"KAYRA_HEALTHZ", "/apis/" + c.Builtin("system") + "/v1/-/healthz"},
 		{"KAYRA_PORT", fmt.Sprint(c.Ports.Kayra)},
@@ -541,7 +561,7 @@ func gatewayRoutes(c *Config) ([]route, error) {
 			"response_status": 200, "content_type": "application/json", "response_example": body,
 		}}
 	}
-	return []route{
+	rs := []route{
 		{"kayra", map[string]any{
 			"uris": []string{
 				"/apis", "/oauth2/*", "/.well-known/kayra.json", "/.well-known/api.json", "/.well-known/oauth-authorization-server",
@@ -566,5 +586,14 @@ func gatewayRoutes(c *Config) ([]route, error) {
 			"plugins":  map[string]any{"proxy-rewrite": map[string]any{"regex_uri": []string{"^/httpbin/(.*)", "/$1"}}},
 			"upstream": map[string]any{"type": "roundrobin", "nodes": map[string]int{"httpbin:80": 1}},
 		}},
-	}, nil
+		{"dex", map[string]any{
+			"uri":      "/dex/*",
+			"upstream": map[string]any{"type": "roundrobin", "nodes": map[string]int{"dex:5556": 1}},
+		}},
+	}
+	if !c.Login() {
+		// no identity provider to route to
+		rs = slices.DeleteFunc(rs, func(r route) bool { return r.ID == "dex" })
+	}
+	return rs, nil
 }
