@@ -108,6 +108,14 @@ reconciler:
           - key: .status
             successes: [done]
             failures: [failed, canceled]
+
+# Who asked for what, and whether it was allowed: every /check decision and
+# every write or denial on Kayra's own routes, as JSON lines in its log
+# (infrapi-cli dev logs kayra). reads: true for get and list too.
+audit:
+  backend: file
+  file:
+    path: "-"
 [[- if .Login ]]
 
 # Kayra's authorization server: infrapi-cli auth login, an MCP client...
