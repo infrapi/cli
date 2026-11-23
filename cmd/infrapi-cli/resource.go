@@ -31,8 +31,10 @@ type resourceRef struct {
 	Resource string // vms, or an action, as Kayra's roles name it: vms/reboot
 	// Namespaced says where it is addressed. Unknown is a resource of a
 	// group named in full whose spec discovery doesn't have yet: it is
-	// addressed in a namespace when one is given.
-	Namespaced, Unknown bool
+	// addressed in a namespace when one is given. Both is a resource its
+	// group serves in a namespace and cluster-scoped, events say: in a
+	// namespace when one is given, cluster-scoped otherwise.
+	Namespaced, Unknown, Both bool
 }
 
 // FullName is the resource's full name, plural then api group.
@@ -124,7 +126,13 @@ func matchResource(groups []discoveryGroup, typed string) (resourceRef, error) {
 			if version == "" {
 				version = "v1"
 			}
-			found = append(found, resourceRef{Api: g.Api, Version: version, Resource: withSub(r.Name, sub), Namespaced: r.Namespaced})
+			ref := resourceRef{Api: g.Api, Version: version, Resource: withSub(r.Name, sub), Namespaced: r.Namespaced}
+			// the same resource of the same group, namespaced and not: one
+			if i := slices.IndexFunc(found, func(f resourceRef) bool { return f.Api == ref.Api && f.Resource == ref.Resource }); i >= 0 {
+				found[i].Namespaced, found[i].Both = true, true
+				continue
+			}
+			found = append(found, ref)
 		}
 	}
 	if len(found) == 0 && noAction != nil {
@@ -176,7 +184,7 @@ func withSub(name, sub string) string {
 func namespaceFor(ref resourceRef, flag string, c clicontext.Context) (string, error) {
 	ns := cmp.Or(flag, c.Namespace)
 	switch {
-	case ref.Unknown:
+	case ref.Unknown, ref.Both:
 		return ns, nil
 	case !ref.Namespaced:
 		return "", nil

@@ -580,6 +580,9 @@ func appEnv(c *Config, identityKey string) string {
 		"# public half is served at -/jwks.json",
 		"INFRAPI_IDENTITY_KEY_PATH=" + q(identityKey),
 		"",
+		"# Its events, to Kayra's events group, as the API (infrapi-cli get events)",
+		`INFRAPI_EVENTS_ENABLED="true"`,
+		"",
 	}, "\n")
 }
 
@@ -622,6 +625,7 @@ func gatewayRoutes(c *Config) ([]route, error) {
 				"/apis/" + c.Builtin("system") + "/*",
 				"/apis/" + c.Builtin("catalog") + "/*",
 				"/apis/" + c.Builtin("authorization") + "/*",
+				"/apis/" + c.Builtin("events") + "/*",
 			},
 			"upstream": map[string]any{"type": "roundrobin", "nodes": map[string]int{"kayra:8081": 1}},
 		}},

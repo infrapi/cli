@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,6 +39,9 @@ var nameKeys = []string{"name", "api"}
 // and a kubectl-style notice on stderr, so a script reading stdout sees
 // no rows rather than a sentence.
 func renderTable(stdout, stderr io.Writer, body []byte, namespace string) (ok bool, err error) {
+	if evs, ok := eventRows(body); ok {
+		return true, renderEvents(stdout, stderr, evs)
+	}
 	rows, ok := resourceRows(body)
 	if !ok {
 		return false, nil
@@ -191,4 +195,80 @@ func clearStyle(n *yaml.Node) {
 	for _, c := range n.Content {
 		clearStyle(c)
 	}
+}
+
+// eventRow is the part of an event of events.<domain> its table shows.
+type eventRow struct {
+	ID         string    `json:"id"`
+	ReceivedAt time.Time `json:"received_at"`
+	Time       time.Time `json:"time"`
+	Type       string    `json:"type"`
+	Reason     string    `json:"reason"`
+	Note       string    `json:"note"`
+	Regarding  struct {
+		Resource string `json:"resource"`
+		Name     string `json:"name"`
+	} `json:"regarding"`
+	Controller string `json:"reporting_controller"`
+	Series     *struct {
+		Count        int       `json:"count"`
+		LastObserved time.Time `json:"last_observed"`
+	} `json:"series"`
+}
+
+// eventRows decodes body as events: a list, or one, each with an id, a
+// reason and a reporting_controller.
+func eventRows(body []byte) ([]eventRow, bool) {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		return nil, false
+	}
+	var evs []eventRow
+	if trimmed[0] == '{' {
+		trimmed = append(append([]byte{'['}, trimmed...), ']')
+	}
+	if json.Unmarshal(trimmed, &evs) != nil || len(evs) == 0 {
+		return nil, false
+	}
+	for _, e := range evs {
+		if e.ID == "" || e.Reason == "" || e.Controller == "" {
+			return nil, false
+		}
+	}
+	return evs, true
+}
+
+// renderEvents is kubectl get events' table: when last seen, its type,
+// reason, object, count and note.
+func renderEvents(stdout, _ io.Writer, evs []eventRow) error {
+	now := time.Now()
+	cells := make([][]string, 0, len(evs))
+	for _, e := range evs {
+		last, count := e.Time, 1
+		if e.Series != nil {
+			last, count = e.Series.LastObserved, e.Series.Count
+		}
+		if last.IsZero() {
+			last = e.ReceivedAt
+		}
+		object := e.Regarding.Resource
+		if e.Regarding.Name != "" {
+			object += "/" + e.Regarding.Name
+		}
+		cells = append(cells, []string{age(now.Sub(last)), e.Type, e.Reason, object, strconv.Itoa(count), e.Note})
+	}
+	return ui.Table(stdout, []string{"LAST SEEN", "TYPE", "REASON", "OBJECT", "COUNT", "NOTE"}, cells, nil)
+}
+
+// age is d as kubectl shows it: 42s, 5m, 3h, 2d.
+func age(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", max(int(d.Seconds()), 0))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd", int(d.Hours()/24))
 }

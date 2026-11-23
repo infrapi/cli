@@ -338,7 +338,7 @@ infrapi-cli create groups -n thetenant \
   -d "{\"name\": \"devs\", $META, \"groups\": [\"sandbox-thetenant-admins\"]}"
 
 infrapi-cli create roles -n thetenant \
-  -d "{\"name\": \"vms-admin\", $META, \"rules\": [{\"apis\": [\"compute.infrapi.io\"], \"resources\": [\"vms\"], \"verbs\": [\"*\"]}]}"
+  -d "{\"name\": \"vms-admin\", $META, \"rules\": [{\"apis\": [\"compute.infrapi.io\"], \"resources\": [\"vms\"], \"verbs\": [\"*\"]}, {\"apis\": [\"events.infrapi.io\"], \"resources\": [\"events\"], \"verbs\": [\"get\", \"list\"]}]}"
 
 infrapi-cli create rolebindings -n thetenant \
   -d "{\"name\": \"devs-vms-admin\", $META, \"role\": \"vms-admin\", \"groups\": [\"devs\"]}"
@@ -356,7 +356,7 @@ curl -s -X POST $NS/groups "${H[@]}" \
   -d "{\"name\": \"devs\", $META, \"groups\": [\"sandbox-thetenant-admins\"]}"
 
 curl -s -X POST $NS/roles "${H[@]}" \
-  -d "{\"name\": \"vms-admin\", $META, \"rules\": [{\"apis\": [\"compute.infrapi.io\"], \"resources\": [\"vms\"], \"verbs\": [\"*\"]}]}"
+  -d "{\"name\": \"vms-admin\", $META, \"rules\": [{\"apis\": [\"compute.infrapi.io\"], \"resources\": [\"vms\"], \"verbs\": [\"*\"]}, {\"apis\": [\"events.infrapi.io\"], \"resources\": [\"events\"], \"verbs\": [\"get\", \"list\"]}]}"
 
 curl -s -X POST $NS/rolebindings "${H[@]}" \
   -d "{\"name\": \"devs-vms-admin\", $META, \"role\": \"vms-admin\", \"groups\": [\"devs\"]}"
@@ -367,7 +367,8 @@ curl -s -X POST $GW/apis/authorization.infrapi.io/v1/check -H "Authorization: Be
 ```
 
 A role names only resources the API's spec declares: Kayra answers 404 for
-any other.
+any other. Its second rule lets the tenant read its
+[events](https://infrapi.github.io/kayra/architecture/events/).
 
 ## 8. Call it
 
@@ -398,6 +399,29 @@ curl -s -X POST $VMS -H "Authorization: Bearer $JDOE" -H "Content-Type: applicat
 curl -s $VMS -H "Authorization: Bearer $NOBODY"
 # {"title":"Forbidden","status":403,…}
 ```
+
+Every write the API served left an event: the API reports it to Kayra
+itself, with its own identity (`INFRAPI_EVENTS_ENABLED` in
+`.infrapi-dev/app.env`). The refused calls left none: they are in Kayra's
+audit, `infrapi-cli dev logs kayra`.
+
+**infrapi-cli**
+
+```bash
+infrapi-cli get events -n thetenant --context dev-jdoe
+# LAST SEEN  TYPE     REASON          OBJECT     COUNT  NOTE
+# 12s        Warning  VMCreateFailed  vms/web-1  1      CreateVM is not implemented yet
+```
+
+**curl**
+
+```bash
+curl -s $GW/apis/events.infrapi.io/v1/namespaces/thetenant/events -H "Authorization: Bearer $JDOE"
+```
+
+The reason comes from the operation, `createVM`: `VMCreated` once it is
+written. A worker records its own with the API's recorder: see
+[lib's events package](https://infrapi.github.io/lib/packages/events/).
 
 ## 9. Write it
 

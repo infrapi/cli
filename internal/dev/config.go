@@ -263,7 +263,8 @@ func (c *Config) FullAPI(name string) string {
 	return name + "." + c.Domain
 }
 
-// Builtin is one of Kayra's own groups: system, catalog or authorization.
+// Builtin is one of Kayra's own groups: system, catalog, authorization or
+// events.
 func (c *Config) Builtin(name string) string {
 	return name + "." + c.Domain
 }

@@ -16,6 +16,8 @@ func TestMatchResource(t *testing.T) {
 		}},
 		{Api: "legacy.infrapi.io", Resources: []discoveryResource{{Name: "policies", Namespaced: true}}},
 		{Api: "vault.infrapi.io"}, // registered, never synced
+		// served in a namespace and cluster-scoped
+		{Api: "events.infrapi.io", Builtin: true, Resources: []discoveryResource{{Name: "events", Namespaced: true}, {Name: "events"}}},
 	}
 	for typed, want := range map[string]resourceRef{
 		"vms":                        {Api: "compute.infrapi.io", Version: "v2", Resource: "vms", Namespaced: true},
@@ -29,6 +31,7 @@ func TestMatchResource(t *testing.T) {
 		"policies.legacy.infrapi.io": {Api: "legacy.infrapi.io", Version: "v1", Resource: "policies", Namespaced: true},
 		"secrets.vault.infrapi.io":   {Api: "vault.infrapi.io", Version: "v1", Resource: "secrets", Unknown: true},
 		"things.other.infrapi.io":    {Api: "other.infrapi.io", Version: "v1", Resource: "things", Unknown: true},
+		"events":                     {Api: "events.infrapi.io", Version: "v1", Resource: "events", Namespaced: true, Both: true},
 	} {
 		got, err := matchResource(groups, typed)
 		if err != nil || got != want {
@@ -89,5 +92,17 @@ func TestBuiltinGroup(t *testing.T) {
 	}
 	if got := doc.builtinGroup("nope"); got != "" {
 		t.Errorf("builtinGroup(nope) = %q", got)
+	}
+}
+
+// A resource served both ways: in the namespace given, cluster-scoped
+// without one.
+func TestNamespaceForBoth(t *testing.T) {
+	ref := resourceRef{Api: "events.infrapi.io", Resource: "events", Namespaced: true, Both: true}
+	if ns, err := namespaceFor(ref, "core", clicontext.Context{}); err != nil || ns != "core" {
+		t.Errorf("-n core: %q %v", ns, err)
+	}
+	if ns, err := namespaceFor(ref, "", clicontext.Context{}); err != nil || ns != "" {
+		t.Errorf("no namespace: %q %v", ns, err)
 	}
 }

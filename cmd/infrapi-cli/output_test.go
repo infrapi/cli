@@ -186,3 +186,22 @@ func TestApisFilterAndRender(t *testing.T) {
 		t.Fatalf("empty: stdout %q stderr %q", out.String(), errOut.String())
 	}
 }
+
+// Events: kubectl get events' columns, the series' count and last time.
+func TestRenderEvents(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	last := time.Now().Add(-5 * time.Minute).UTC().Format(time.RFC3339)
+	body := []byte(`[{"id":"e1","type":"Warning","reason":"VMCreateFailed","note":"no capacity","reporting_controller":"compute",
+	  "regarding":{"api":"compute.infrapi.io","resource":"vms","name":"web-1"},"series":{"count":30,"last_observed":"` + last + `"}},
+	 {"id":"e2","type":"Normal","reason":"VMCreated","reporting_controller":"compute","time":"` + last + `","regarding":{"resource":"vms"}}]`)
+	var out, errOut bytes.Buffer
+	ok, err := renderTable(&out, &errOut, body, "core")
+	if !ok || err != nil {
+		t.Fatalf("%v %v", ok, err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 3 || !strings.HasPrefix(lines[0], "LAST SEEN") ||
+		!strings.Contains(lines[1], "5m") || !strings.Contains(lines[1], "vms/web-1") || !strings.Contains(lines[1], "30") || !strings.Contains(lines[1], "no capacity") {
+		t.Errorf("%s", out.String())
+	}
+}

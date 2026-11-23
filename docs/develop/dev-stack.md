@@ -113,7 +113,7 @@ and from templates infrapi-cli carries:
 | `apisix/config.yaml` | APISIX's configuration |
 | `apisix/routes.sh`, `routes/*.json` | the script `gateway-init` runs, and the gateway's own routes it loads |
 | `env` | the domain, image and ports, for compose |
-| `app.env` | your API's settings, as its `internal/config` reads them: `infrapi-cli app run`; `INFRAPI_IDENTITY_KEY_PATH` names `keys/app-identity.pem` |
+| `app.env` | your API's settings, as its `internal/config` reads them: `infrapi-cli app run`; `INFRAPI_IDENTITY_KEY_PATH` names `keys/app-identity.pem`, `INFRAPI_EVENTS_ENABLED` sends its events to Kayra |
 | `.gitignore` | `*`: git ignores the whole directory |
 | `kayra/Dockerfile` | only to build Kayra from a checkout (`kayra.src`) |
 

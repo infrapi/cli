@@ -10,6 +10,11 @@
 # info.title is the API's name, its Go package internal/<title>;
 # info.x-infrapi-group its group: every path is under /apis/<group>/v1.
 # Every operation has an operationId, its Go method's name.
+#
+# Every write it serves records an event, its reason the operationId's
+# (createVM: VMCreated, VMCreateFailed). On an operation,
+#   x-infrapi-event: {reason: VMPromoted}   names it,
+#   x-infrapi-event: false                  records none.
 openapi: 3.0.3
 info:
   title: [[ .Name ]]

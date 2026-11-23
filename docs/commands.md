@@ -380,6 +380,13 @@ too, `vms.compute`). `GET /apis` says which group serves it, at which
 version, and whether it is namespaced: a namespaced one is addressed in
 `-n`, else the [context's namespace](#context); a cluster-scoped one
 never is.
+A resource its group serves both ways, Kayra's `events` say, is addressed in
+the namespace when one is given, cluster-scoped otherwise.
+
+```bash
+infrapi-cli get events -n core                                    # LAST SEEN, TYPE, REASON, OBJECT, COUNT, NOTE
+infrapi-cli get events -n core --field-selector type=Warning,regarding.name=web-1
+```
 
 When several api groups serve the name, nothing is sent: a warning lists
 the command again with each full name.

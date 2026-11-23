@@ -19,6 +19,9 @@ type Config struct {
 	// INFRAPI_IDENTITY_KEY_PATH, its key, or INFRAPI_IDENTITY_TOKEN_PATH, a
 	// platform's token. None when neither is set.
 	Identity libconfig.Identity
+	// Events is how [[ .Name ]] records its events, INFRAPI_EVENTS_*: to
+	// Kayra, as the API, when enabled; to its log otherwise.
+	Events libconfig.Events
 }
 
 // Load reads the settings, and fails on a missing or invalid one.
@@ -39,6 +42,10 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	events, err := vars.GetEvents()
+	if err != nil {
+		return nil, err
+	}
 
 	// Your own settings are read the same way, a field of Config each:
 	//
@@ -54,5 +61,5 @@ func Load() (*Config, error) {
 	// Validator takes a go-playground/validator rule (url, hostname, oneof=a b...).
 	// Add them to dev.yaml's app.env to have them in .infrapi-dev/app.env.
 
-	return &Config{App: app, AuthURL: authURL, Identity: identity}, nil
+	return &Config{App: app, AuthURL: authURL, Identity: identity, Events: events}, nil
 }
