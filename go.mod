@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	charm.land/huh/v2 v2.0.3
-	charm.land/lipgloss/v2 v2.0.6
+	charm.land/lipgloss/v2 v2.1.1
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/pmezard/go-difflib v1.0.0
