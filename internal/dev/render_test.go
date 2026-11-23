@@ -1,7 +1,11 @@
 package dev
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,6 +96,39 @@ func TestRender_keys(t *testing.T) {
 	}
 	if st, _ := os.Stat(filepath.Join(dir, "keys", "self.pem")); st.Mode().Perm() != 0o600 {
 		t.Errorf("key mode %v, want 0600", st.Mode().Perm())
+	}
+}
+
+// The API's identity key: EC P-256, 0600, kept across renders, named by
+// app.env by its absolute path.
+func TestRender_identityKey(t *testing.T) {
+	c, err := LoadConfig(writeConfig(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "keys", IdentityKey)
+	r, err := Render(c, dir, RenderOptions{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.Diff, "keys/app-identity.pem: new identity key of the API sha256:") {
+		t.Errorf("diff: %s", r.Diff)
+	}
+	first := read(t, path)
+	b, _ := pem.Decode([]byte(first))
+	key, err := x509.ParsePKCS8PrivateKey(b.Bytes)
+	if ec, ok := key.(*ecdsa.PrivateKey); err != nil || !ok || ec.Curve != elliptic.P256() {
+		t.Fatalf("not an EC P-256 key: %T %v", key, err)
+	}
+	if st, _ := os.Stat(path); st.Mode().Perm() != 0o600 {
+		t.Errorf("mode %v", st.Mode().Perm())
+	}
+	if env := read(t, filepath.Join(dir, "app.env")); !strings.Contains(env, `INFRAPI_IDENTITY_KEY_PATH="`+path+`"`) {
+		t.Errorf("app.env: %s", env)
+	}
+	if r, err := Render(c, dir, RenderOptions{}); err != nil || r.Pending || read(t, path) != first {
+		t.Fatalf("a second render: %v %+v", err, r)
 	}
 }
 

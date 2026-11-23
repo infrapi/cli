@@ -176,7 +176,7 @@ func (l login) callback(codeCh chan<- string, errCh chan<- error) http.Handler {
 		fail := func(msg string) {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			w.WriteHeader(http.StatusBadRequest)
-			_, _ = fmt.Fprintf(w, "Login failed: %s\nCheck the terminal, and run infrapi-cli auth login again.\n", msg)
+			_, _ = fmt.Fprintf(w, "Login failed: %s\nCheck the terminal, and run infrapi-cli auth login again.\n", msg) //#nosec G705 -- text/plain, never rendered as HTML
 			errCh <- fmt.Errorf("oauth2login: %s", msg)
 		}
 		switch {

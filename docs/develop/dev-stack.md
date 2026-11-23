@@ -109,11 +109,11 @@ and from templates infrapi-cli carries:
 |---|---|
 | `compose.yaml` | the containers; `compose.docker.yaml` adds the host's address with docker |
 | `kayra.yaml`, `users.yaml` | Kayra's configuration and its users, read by both Kayra containers |
-| `keys/*.pem` | the keys Kayra signs tokens with: created once, then kept |
+| `keys/*.pem` | the keys Kayra signs tokens with, and `app-identity.pem`, your API's [identity key](https://infrapi.github.io/kayra/architecture/api-identity/): created once, then kept |
 | `apisix/config.yaml` | APISIX's configuration |
 | `apisix/routes.sh`, `routes/*.json` | the script `gateway-init` runs, and the gateway's own routes it loads |
 | `env` | the domain, image and ports, for compose |
-| `app.env` | your API's settings, as its `internal/config` reads them: `infrapi-cli app run` |
+| `app.env` | your API's settings, as its `internal/config` reads them: `infrapi-cli app run`; `INFRAPI_IDENTITY_KEY_PATH` names `keys/app-identity.pem` |
 | `.gitignore` | `*`: git ignores the whole directory |
 | `kayra/Dockerfile` | only to build Kayra from a checkout (`kayra.src`) |
 

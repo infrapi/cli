@@ -77,8 +77,19 @@ func appCommand() *cli.Command {
 					&cli.StringFlag{Name: "owner", Value: "dev", Usage: "the registration's owner"},
 					&cli.StringFlag{Name: "upstream", Usage: "the gateway's upstream, host:port (default: dev.yaml's app.port on the host)"},
 					&cli.BoolFlag{Name: "no-route", Usage: "register only: leave the gateway's routes alone"},
+					&cli.StringFlag{Name: "jwks", Usage: "pin the API's identity keys: a JWK set file, or a PEM key whose public half is sent (default: the keys the API serves at -/jwks.json)"},
+					&cli.BoolFlag{Name: "no-identity", Usage: "register the API without an identity: it gets no token"},
 				},
 				Action: runAppRegister,
+			},
+			{
+				Name:      "keygen",
+				Usage:     "write a new identity key for the API, EC P-256, and print its public half: INFRAPI_IDENTITY_KEY_PATH",
+				ArgsUsage: "<file>",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{Name: "force", Usage: "replace the file"},
+				},
+				Action: runAppKeygen,
 			},
 		},
 	}
@@ -236,10 +247,18 @@ func runAppRegister(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("%s names no catalog group", c.Server)
 	}
 	base := "/apis/" + catalog + "/v1/apiregistrations"
-	body, err := json.Marshal(map[string]any{
+	reg := map[string]any{
 		"name": info.Group, "short_name": info.Name, "version": info.Versions[len(info.Versions)-1],
 		"active": true, "owner": cmd.String("owner"), "description": info.Description,
-	})
+	}
+	identity, err := registrationIdentity(cmd)
+	if err != nil {
+		return err
+	}
+	if identity != nil {
+		reg["identity"] = identity
+	}
+	body, err := json.Marshal(reg)
 	if err != nil {
 		return err
 	}
@@ -255,5 +274,52 @@ func runAppRegister(ctx context.Context, cmd *cli.Command) error {
 	_, _ = fmt.Fprintf(out, "kayra: %s %s, its spec read again, on %s\n", ui.Name(info.Group), ui.OK("registered"), ui.URL(c.Server))
 	_, _ = fmt.Fprintf(out, "  %s: subscribe a namespace, %s\n", ui.Bold("next"),
 		ui.Cmd(fmt.Sprintf(`infrapi-cli create subscriptions -n <namespace> -d '{"api": "%s"}'`, info.Group)))
+	return nil
+}
+
+// registrationIdentity is the identity app register sends: the keys the API
+// serves at -/jwks.json, the ones --jwks pins (a JWK set, or a PEM key's
+// public half), or none with --no-identity.
+func registrationIdentity(cmd *cli.Command) (map[string]any, error) {
+	file := cmd.String("jwks")
+	switch {
+	case cmd.Bool("no-identity") && file != "":
+		return nil, errors.New("app register: --jwks or --no-identity, not both")
+	case cmd.Bool("no-identity"):
+		return nil, nil
+	case file == "":
+		return map[string]any{"jwks_from": "spec"}, nil
+	}
+	data, err := os.ReadFile(file) //#nosec G304 -- the file the user names
+	if err != nil {
+		return nil, fmt.Errorf("--jwks: %w", err)
+	}
+	var set json.RawMessage
+	if json.Unmarshal(data, &set) == nil {
+		return map[string]any{"jwks": set}, nil
+	}
+	pub, err := app.PublicKeys(file)
+	if err != nil {
+		return nil, fmt.Errorf("--jwks: a JWK set, or a PEM key: %w", err)
+	}
+	return map[string]any{"jwks": pub}, nil
+}
+
+func runAppKeygen(_ context.Context, cmd *cli.Command) error {
+	path := cmd.Args().First()
+	if path == "" {
+		return errors.New("app keygen: the key's file, say identity.pem")
+	}
+	set, err := app.Keygen(path, cmd.Bool("force"))
+	if err != nil {
+		return fmt.Errorf("app keygen: %w", err)
+	}
+	pub, err := json.MarshalIndent(set, "", "  ")
+	if err != nil {
+		return err
+	}
+	// the public half on stdout, for a file or app register --jwks
+	_, _ = fmt.Fprintf(ui.Stderr(), "%s %s, kid %s: INFRAPI_IDENTITY_KEY_PATH=%s\n", ui.Name(path), ui.OK("written"), set.Keys[0].Kid, path)
+	_, _ = fmt.Fprintln(os.Stdout, string(pub))
 	return nil
 }

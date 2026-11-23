@@ -15,6 +15,10 @@ type Config struct {
 	App *libconfig.AppConfig
 	// AuthURL is Kayra's URL, through the gateway: [[ .EnvPrefix ]]_AUTH_URL.
 	AuthURL string
+	// Identity is the API's own identity at Kayra, system:api:[[ .Group ]]:
+	// INFRAPI_IDENTITY_KEY_PATH, its key, or INFRAPI_IDENTITY_TOKEN_PATH, a
+	// platform's token. None when neither is set.
+	Identity libconfig.Identity
 }
 
 // Load reads the settings, and fails on a missing or invalid one.
@@ -28,6 +32,10 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	authURL, err := vars.GetString(&libconfig.VariableOpts{Key: "[[ .EnvPrefix ]]_AUTH_URL", Validator: "url"})
+	if err != nil {
+		return nil, err
+	}
+	identity, err := vars.GetIdentity()
 	if err != nil {
 		return nil, err
 	}
@@ -46,5 +54,5 @@ func Load() (*Config, error) {
 	// Validator takes a go-playground/validator rule (url, hostname, oneof=a b...).
 	// Add them to dev.yaml's app.env to have them in .infrapi-dev/app.env.
 
-	return &Config{App: app, AuthURL: authURL}, nil
+	return &Config{App: app, AuthURL: authURL, Identity: identity}, nil
 }

@@ -121,7 +121,7 @@ func Add(root string, r Resource) (Added, error) {
 	if data, err = insert(data, []string{"components", "schemas"}, schemas); err != nil {
 		return Added{}, fmt.Errorf("%s: %w", c.File, err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil { //#nosec G306 -- a source file
+	if err := os.WriteFile(path, data, 0o644); err != nil { //#nosec G306 G703 -- a source file of the project, its contract's path
 		return Added{}, err
 	}
 	added := Added{Singular: r.Name, Plural: r.Plural, Contract: filepath.Join("api", c.File)}

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/infrapi/lib/pkg/auth"
+	"github.com/infrapi/lib/pkg/identity"
 	"github.com/infrapi/lib/pkg/listener"
 	"github.com/infrapi/lib/pkg/logger"
 	"github.com/infrapi/lib/pkg/server"
@@ -54,11 +55,22 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// The API's own identity, system:api:[[ .Group ]]: its keys' public halves
+	// at <root>/-/jwks.json, where Kayra reads them (app register sends
+	// identity.jwks_from: spec). To call Kayra or another API as the API:
+	//
+	//	tokens, err := auth.NewClientCredentials(auth.ClientCredentialsOptions{
+	//		Kayra: kayra, ClientID: identity.Subject("[[ .Group ]]"), Key: keys[0]})
+	//	other, err := client.NewClient(&client.ClientOptions{..., TokenSource: tokens.Token})
+	keys, err := identity.LoadKeys(cfg.Identity.KeyPaths)
+	if err != nil {
+		return err
+	}
 	// <root>/-/ (healthz, metrics, openapi.json, docs...) for each root, the
 	// contracts checked before any handler runs
 	engine, err := server.NewServerGin(cfg.App, api.Roots,
 		server.WithAuth(kayra.Middleware()), server.WithOpenAPI(api.Contracts()...),
-		server.WithProtectedResource(kayra.AuthorizationServer))
+		server.WithProtectedResource(kayra.AuthorizationServer), server.WithIdentity(keys...))
 	if err != nil {
 		return err
 	}
@@ -72,7 +84,7 @@ func run(ctx context.Context) error {
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(ln) }()
 	log.Info("serving", logger.String("address", ln.Addr().String()), logger.Any("roots", api.Roots),
-		logger.String("auth", cfg.AuthURL))
+		logger.String("auth", cfg.AuthURL), logger.Int("identity_keys", len(keys)))
 
 	select {
 	case err := <-served:

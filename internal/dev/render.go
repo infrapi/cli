@@ -2,6 +2,8 @@ package dev
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -40,7 +42,9 @@ const keyIndent = "          "
 //	app.env       the API's settings, as infrapi/lib reads them (app.port...)
 //	.gitignore    the whole directory, for git
 //	dex/config.yaml  Dex, the identity provider: dev.yaml's users
-//	keys/*.pem    the signing keys, generated when missing or when NewKeys
+//	keys/*.pem    the signing keys, generated when missing or when NewKeys;
+//	              app-identity.pem the API's own identity key, EC P-256
+//	              (app.env's INFRAPI_IDENTITY_KEY_PATH)
 //	compose.yaml, compose.docker.yaml, apisix/config.yaml, apisix/routes.sh,
 //	kayra/Dockerfile: the stack itself, from templates/stack, gateway.config
 //	merged into apisix/config.yaml
@@ -136,11 +140,28 @@ func plan(c *Config, dir string, newKeys bool) (*rendering, error) {
 		keys[name] = key
 	}
 
+	// the API's identity key: it signs its assertions, and serves the public
+	// half at -/jwks.json, for Kayra's reconciler to read
+	identityRel := filepath.Join("keys", IdentityKey)
+	identity, created, err := identityKey(filepath.Join(dir, identityRel), newKeys)
+	if err != nil {
+		return nil, err
+	}
+	if created {
+		fmt.Fprintf(&pl.diff, "%s: new identity key of the API %s\n", identityRel, fingerprint(identity))
+		pl.keys[identityRel] = identity
+		pl.files = append(pl.files, identityRel)
+	}
+	identityPath, err := filepath.Abs(filepath.Join(dir, identityRel))
+	if err != nil {
+		return nil, err
+	}
+
 	kayra, err := renderKayra(c, keys["self.pem"], keys["local.pem"])
 	if err != nil {
 		return nil, err
 	}
-	users, err := yaml.Marshal(map[string][]User{"users": c.Users})
+	users, err := yaml.Marshal(map[string][]User{"users": c.Users}) //#nosec G117 -- the dev stack's users, their passwords dev.yaml's
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +173,7 @@ func plan(c *Config, dir string, newKeys bool) (*rendering, error) {
 		"env":        []byte(withEnv(envFile(c), c.Compose.Env, "compose.env")),
 		"kayra.yaml": kayra,
 		"users.yaml": append([]byte("# The users of dev.yaml, rendered by infrapi-cli dev render: edit dev.yaml.\n"), users...),
-		"app.env":    []byte(withEnv(appEnv(c), c.App.Env, "app.env")),
+		"app.env":    []byte(withEnv(appEnv(c, identityPath), c.App.Env, "app.env")),
 		// git ignores the directory: it is rendered, and has keys
 		".gitignore": []byte("# Rendered by infrapi-cli dev render: the whole directory is.\n*\n"),
 	}
@@ -271,7 +292,7 @@ func (pl *rendering) apply(dir string) error {
 		if err != nil || d.IsDir() || filepath.Dir(path) == filepath.Join(dir, "keys") {
 			return err
 		}
-		return os.Chmod(path, 0o644) //#nosec G302 -- see writeFile
+		return os.Chmod(path, 0o644) //#nosec G302 G122 -- see writeFile; .infrapi-dev is the render's own directory
 	})
 }
 
@@ -437,6 +458,35 @@ func signingKey(path string, renew bool) (key []byte, created bool, err error) {
 	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), true, nil
 }
 
+// IdentityKey is the API's identity key, in .infrapi-dev/keys.
+const IdentityKey = "app-identity.pem"
+
+// identityKey is the PEM of the EC P-256 key at path, generated when the
+// file is missing or when renew: created says so, and the render writes it.
+func identityKey(path string, renew bool) (key []byte, created bool, err error) {
+	if !renew {
+		data, err := os.ReadFile(path) //#nosec G304 -- a key of the render's own dir
+		if err == nil {
+			if b, _ := pem.Decode(data); b == nil {
+				return nil, false, fmt.Errorf("%s: not a PEM key: remove it, or render with new keys", path)
+			}
+			return data, false, nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return nil, false, err
+		}
+	}
+	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, false, err
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(ecKey)
+	if err != nil {
+		return nil, false, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), true, nil
+}
+
 func renderKayra(c *Config, selfKey, localKey []byte) ([]byte, error) {
 	tmpl, err := template.New("kayra.yaml.tmpl").Delims("[[", "]]").ParseFS(templates, "templates/kayra.yaml.tmpl")
 	if err != nil {
@@ -499,9 +549,9 @@ func envFile(c *Config) string {
 const localImage = "kayra-dev:local"
 
 // appEnv is the API's dotenv, as infrapi-cli app init's internal/config
-// reads it: infrapi/lib's INFRAPI_APP_* keys, and Kayra's URL through the
-// gateway, as <NAME>_AUTH_URL.
-func appEnv(c *Config) string {
+// reads it: infrapi/lib's INFRAPI_APP_* keys, Kayra's URL through the
+// gateway, as <NAME>_AUTH_URL, and its identity key, at identityKey.
+func appEnv(c *Config, identityKey string) string {
 	name := AppName(c.FullAPI(c.App.API))
 	gateway := fmt.Sprintf("http://localhost:%d", c.Ports.Gateway)
 	return strings.Join([]string{
@@ -525,6 +575,10 @@ func appEnv(c *Config) string {
 		"",
 		"# Kayra, through the gateway",
 		EnvPrefix(name) + "_AUTH_URL=" + q(gateway),
+		"",
+		"# The API's own identity at Kayra, system:api:<group>: its key signs, its",
+		"# public half is served at -/jwks.json",
+		"INFRAPI_IDENTITY_KEY_PATH=" + q(identityKey),
 		"",
 	}, "\n")
 }

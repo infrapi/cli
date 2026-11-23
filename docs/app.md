@@ -22,6 +22,7 @@ and its release. What it writes is the project's from then on: only the
 | `app generate` | writes the Go code from the contracts: `api/zz_generated.go`, `internal/<name>/zz_generated.go` | Go |
 | `app run` | runs the API against the dev stack, with `.infrapi-dev/app.env` | `go run ./cmd/<name>` (`os/exec`) |
 | `app register` | routes the dev stack's gateway to the API, then registers it in Kayra | Go, APISIX's Admin API and Kayra's catalog |
+| `app keygen <file>` | writes an identity key for the API, and prints its public half | Go |
 
 Every command but `init` works on the project the working directory is
 in: the first directory up with a `go.mod` and an `api/`.
@@ -132,7 +133,7 @@ environment. It refuses a `.infrapi-dev/` that is not `dev.yaml`'s
 ## app register
 
 ```bash
-infrapi-cli app register [--owner dev] [--upstream host:port] [--no-route]
+infrapi-cli app register [--owner dev] [--upstream host:port] [--no-route] [--jwks <file> | --no-identity]
 ```
 
 With the project's `dev.yaml`, it routes the dev stack's gateway to the API
@@ -141,8 +142,31 @@ or to `--upstream`; `--no-route` leaves the routes alone. Then it registers
 the API in Kayra, as the current context (`--context` for another):
 
 ```json
-{"name": "compute.infrapi.io", "short_name": "compute", "version": "v1", "active": true, "owner": "dev", "description": "The compute API."}
+{"name": "compute.infrapi.io", "short_name": "compute", "version": "v1", "active": true, "owner": "dev", "description": "The compute API.",
+ "identity": {"jwks_from": "spec"}}
 ```
 
 Registered again, the API gets a new `sync_id`: Kayra reads its spec again,
 and resyncs the tenants subscribed to it.
+
+`identity` is the API's [own identity](https://infrapi.github.io/kayra/architecture/api-identity/),
+`system:api:<group>`:
+
+- **By default, `jwks_from: spec`:** Kayra reads the keys the API serves at
+  `-/jwks.json`, with its spec. An API that serves none gets no token.
+- **`--jwks <file>`:** pins the keys instead, from a JWK set file (what
+  `app keygen` prints) or a PEM key, whose public half only is sent.
+- **`--no-identity`:** registers the API without one.
+
+## app keygen
+
+```bash
+infrapi-cli app keygen /etc/compute/identity.pem > compute-jwks.json
+# /etc/compute/identity.pem written, kid hSO0YDfX…: INFRAPI_IDENTITY_KEY_PATH=/etc/compute/identity.pem
+```
+
+Writes a new EC P-256 key, PKCS#8 PEM, mode 0600: the API's identity key,
+which its `internal/config` reads from `INFRAPI_IDENTITY_KEY_PATH`. It
+prints the public half on stdout, a JWK set whose `kid` is the key's RFC 7638
+thumbprint. It refuses to replace a file unless `--force`. The dev stack
+makes one of its own, `.infrapi-dev/keys/app-identity.pem`.

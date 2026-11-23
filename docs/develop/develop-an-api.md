@@ -207,6 +207,13 @@ infrapi-cli apis --api-group compute
 curl -s $GW/apis -H "Authorization: Bearer $ADMIN" | jq '.[] | select(.api == "compute.infrapi.io") | .resources'
 ```
 
+The registration also gives the API an identity of its own,
+`system:api:compute.infrapi.io`: Kayra reads the public half of its key at
+`/apis/compute.infrapi.io/v1/-/jwks.json`, which the API serves from
+`INFRAPI_IDENTITY_KEY_PATH`, the dev stack's `keys/app-identity.pem`. With
+it, your code gets tokens as the API, to call Kayra or another API: see
+[API identity](https://infrapi.github.io/kayra/architecture/api-identity/).
+
 `infrapi-cli app register` is two calls, which you make yourself where there
 is no dev stack, its route set by whoever runs the gateway:
 
@@ -215,7 +222,8 @@ is no dev stack, its route set by whoever runs the gateway:
 ```bash
 infrapi-cli dev api add       # the route: /apis/compute.infrapi.io/* -> your API, dev.yaml's app.port
 infrapi-cli create apiregistrations \
-  -d '{"name": "compute.infrapi.io", "short_name": "compute", "version": "v1", "active": true, "owner": "dev"}'
+  -d '{"name": "compute.infrapi.io", "short_name": "compute", "version": "v1", "active": true, "owner": "dev",
+      "identity": {"jwks_from": "spec"}}'
 ```
 
 **curl**
@@ -223,7 +231,8 @@ infrapi-cli create apiregistrations \
 ```bash
 curl -s -X POST $GW/apis/catalog.infrapi.io/v1/apiregistrations \
   -H "Authorization: Bearer $ADMIN" -H "Content-Type: application/json" \
-  -d '{"name": "compute.infrapi.io", "short_name": "compute", "version": "v1", "active": true, "owner": "dev"}'
+  -d '{"name": "compute.infrapi.io", "short_name": "compute", "version": "v1", "active": true, "owner": "dev",
+      "identity": {"jwks_from": "spec"}}'
 ```
 
 ## 5. Onboard a tenant
