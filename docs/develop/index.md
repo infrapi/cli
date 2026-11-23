@@ -7,7 +7,7 @@ weight: 60
 # Develop an API
 
 Two commands of [infrapi-cli](https://infrapi.github.io/cli/getting-started/#1-install)
-take an API from nothing to a tenant calling it:
+take an API from nothing to a namespace's user calling it:
 
 - **`infrapi-cli app`** writes and grows **your project**: a Go module on
   [infrapi/lib](https://github.com/infrapi/lib), its OpenAPI contract, its CI and
@@ -24,7 +24,7 @@ take an API from nothing to a tenant calling it:
 | I want to... | Go to |
 |---|---|
 | Install what is needed, create a project and its stack, start it, log in | [Getting started](getting-started.md) |
-| Add a resource, write it, register the API, call it as a tenant | [Develop an API](develop-an-api.md) |
+| Add a resource, write it, register the API, call it as a namespace's user | [Develop an API](develop-an-api.md) |
 | Know what runs, how it is configured, the commands, how to reset | [The dev stack](dev-stack.md) |
 | Follow one API end to end, with a real backend | [Build an EC2 instance API](https://infrapi.github.io/learn/build-an-ec2-api-with-lib/) |
 

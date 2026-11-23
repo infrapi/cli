@@ -154,7 +154,7 @@ and its password, its id:
 infrapi-cli auth login --server http://localhost:9080
 # a browser opens: jdoe@example.com, password jdoe
 infrapi-cli auth whoami
-# groups:         sandbox-thetenant-admins
+# groups:         sandbox-acme-admins
 # sub:            jdoe
 ```
 
@@ -173,7 +173,7 @@ infrapi-cli auth context list
 | Context | Who | Can |
 |---|---|---|
 | `dev-admin` (current) | a sysadmin, group `sandbox-core-sysadmin` | everything: namespaces, API registrations, RBAC |
-| `dev-jdoe` | the user `jdoe`, group `sandbox-thetenant-admins` | what the RBAC you create grants that group |
+| `dev-jdoe` | the user `jdoe`, group `sandbox-acme-admins` | what the RBAC you create grants that group |
 | `dev-nobody` | the user `nobody`, no group | nothing: authenticated, authorized for nothing |
 
 **infrapi-cli**
@@ -202,7 +202,7 @@ registered yet. Ask it what it serves, as `dev-admin`:
 
 ```bash
 infrapi-cli apis                              # every API group and its resources: Kayra's own, for now
-infrapi-cli get namespaces             # the tenants: none yet
+infrapi-cli get namespaces             # none yet
 infrapi-cli get apiregistrations      # the registered APIs: none yet
 ```
 
@@ -224,7 +224,7 @@ Read the docs in this order:
 
 1. **[Develop an API](develop-an-api.md)**: add a resource to the
    contract, write it, run it behind the gateway, register it in Kayra,
-   onboard a tenant, and call it as one of its users.
+   create a namespace, and call it as one of its users.
 2. **[The dev stack](dev-stack.md)**: how the stack works, the everyday
    commands, `dev.yaml`, users and tokens, the gateway, and how to start
    over.

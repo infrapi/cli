@@ -21,7 +21,7 @@ func TestWriteConfig(t *testing.T) {
 	}
 	if c.Domain != "example.org" || c.Platform != "preprod" || c.Region != "eu-west-1" || c.Kayra.Image != "ghcr.io/infrapi/kayra:latest" ||
 		c.App.API != "compute.example.com" || c.App.Port != 8088 || c.SysadminGroups[0] != "preprod-core-sysadmin" ||
-		c.Users[1].Groups[0] != "preprod-thetenant-admins" {
+		c.Users[1].Groups[0] != "preprod-acme-admins" {
 		t.Errorf("dev.yaml read back: %+v", c)
 	}
 	b, _ := os.ReadFile(path)

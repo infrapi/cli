@@ -24,7 +24,7 @@ InfraPI's command line, one binary for three things:
 |---|---|
 | Install it, log in, make a first call | [Getting started](getting-started.md) |
 | Know every command against Kayra, and its flags | [Commands](commands.md) |
-| Develop an API, from nothing to a tenant calling it | [Develop an API](develop/index.md) |
+| Develop an API, from nothing to a namespace's user calling it | [Develop an API](develop/index.md) |
 | Know every `app` command | [app](app.md) |
 | Know every `dev` command | [dev](dev.md) |
 | Read the code: contexts, the login flow, the project generator, the dev stack | [Packages](packages.md) |

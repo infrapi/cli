@@ -30,7 +30,7 @@ components:
       name: namespace
       in: path
       required: true
-      description: The namespace, a tenant's or one of its teams'.
+      description: The namespace the resource lives in.
       schema: {type: string, pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$', maxLength: 63}
     name:
       name: name

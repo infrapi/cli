@@ -29,7 +29,7 @@ your API, on your machine :8080 ───────────────┘
   Kayra's API and yours.
 - **Kayra** says who the caller is and what they may do. Your API asks it on
   every request.
-- **The reconciler**, Kayra's other half, syncs each tenant subscribed to
+- **The reconciler**, Kayra's other half, syncs each namespace subscribed to
   your API. It reads your API's spec through the gateway.
 - **etcd** stores Kayra's objects and the gateway's routes.
 
@@ -252,7 +252,7 @@ reads a token's groups from there. There are two ways to be one:
 | User | Groups | Who it plays |
 |---|---|---|
 | `admin` | `sandbox-core-sysadmin` | the platform's administrator |
-| `jdoe` | `sandbox-thetenant-admins` | a tenant's user: allowed what the tenant's RBAC grants that group |
+| `jdoe` | `sandbox-acme-admins` | a user of the `acme` namespace: allowed what its RBAC grants that group |
 | `nobody` | none | someone authenticated, authorized for nothing |
 
 ### Log in
@@ -261,7 +261,7 @@ reads a token's groups from there. There are two ways to be one:
 infrapi-cli auth login --server http://localhost:9080
 # a browser opens on Dex: jdoe@example.com, password jdoe
 infrapi-cli auth whoami
-# groups:         sandbox-thetenant-admins
+# groups:         sandbox-acme-admins
 # sub:            jdoe
 ```
 
@@ -294,7 +294,7 @@ the tokens expire. Use one context for a single command with
 infrapi-cli auth whoami --context dev-jdoe
 # authorization:  users
 # email:          jdoe@example.com
-# groups:         sandbox-thetenant-admins
+# groups:         sandbox-acme-admins
 # name:           John Doe
 # provider:       local
 # sub:            jdoe
@@ -305,7 +305,7 @@ infrapi-cli auth whoami --context dev-jdoe
 ```bash
 JDOE=$(infrapi-cli auth context token dev-jdoe)
 curl -s -X POST http://localhost:9080/oauth2/userinfo -H "Authorization: Bearer $JDOE"
-# {"authorization":"users","email":"jdoe@example.com","groups":["sandbox-thetenant-admins"],"name":"John Doe","provider":"local","sub":"jdoe"}
+# {"authorization":"users","email":"jdoe@example.com","groups":["sandbox-acme-admins"],"name":"John Doe","provider":"local","sub":"jdoe"}
 ```
 
 To add a user or change their groups, edit `users` in `dev.yaml`, run
@@ -322,7 +322,7 @@ request goes. The stack loads its own at start:
 |---|---|---|
 | `kayra` | `/apis`, `/oauth2/*`, `/.well-known/kayra.json` and `api.json`, `/apis/{system,catalog,authorization}.<domain>/*` | Kayra |
 | `openapi-stub` | an API's spec, `GET /apis/<api>/<version>/-/openapi.json`, for an API with no route yet | a stand-in spec, one resource, `widgets` |
-| `hooks` | `/hooks/*` | always `{"status":"done"}`: what the reconciler calls to sync a tenant |
+| `hooks` | `/hooks/*` | always `{"status":"done"}`: what the reconciler calls to sync a namespace |
 | `healthz` | `GET /healthz` | `{"status":"ok"}` |
 | `httpbin` | `/httpbin/*` | the `httpbin` container |
 
@@ -418,7 +418,7 @@ log in at:
 
 ### The reconcile pipeline
 
-When a tenant subscribes to an API, or the API's registration changes, the
+When a namespace subscribes to an API, or the API's registration changes, the
 reconciler fetches the API's spec through the gateway, then runs the `dev`
 pipeline of Kayra's configuration:
 

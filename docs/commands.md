@@ -210,7 +210,7 @@ infrapi-cli auth login --server https://kayra-staging.internal --context-name st
 
 infrapi-cli auth context list
 # CURRENT  NAME            PROVIDER  SERVER                          NAMESPACE  EXPIRY
-#          kayra.internal  okta      https://kayra.internal          thetenant  2026-11-03T16:04:05+01:00
+#          kayra.internal  okta      https://kayra.internal          acme  2026-11-03T16:04:05+01:00
 # *        staging         okta      https://kayra-staging.internal  -          2026-11-03T17:04:05+01:00
 
 # save an existing token (e.g. a `kayra token mint` bootstrap token) without logging in
@@ -228,10 +228,10 @@ name none: `-n` overrides it for one command, and a cluster-scoped
 resource ignores it. A new login, or `set` again, keeps it.
 
 ```bash
-infrapi-cli auth ctx ns thetenant        # the current context now works in thetenant
-infrapi-cli get vms                      # .../namespaces/thetenant/vms
+infrapi-cli auth ctx ns acme        # the current context now works in acme
+infrapi-cli get vms                      # .../namespaces/acme/vms
 infrapi-cli get vms -n core              # .../namespaces/core/vms, this once
-infrapi-cli auth ctx ns                  # print it: thetenant
+infrapi-cli auth ctx ns                  # print it: acme
 infrapi-cli auth ctx ns --unset          # forget it
 ```
 
@@ -321,7 +321,7 @@ against.
 infrapi-cli auth whoami
 # authorization:  idm
 # email:           jdoe@example.com
-# groups:          sandbox-core-sysadmin, sandbox-thetenant-admins
+# groups:          sandbox-core-sysadmin, sandbox-acme-admins
 # name:            John Doe
 # provider:        self
 # sub:             jdoe
@@ -430,15 +430,15 @@ take the token from the current context with
 
 ```bash
 # namespaced: in -n, or the context's namespace
-infrapi-cli get subscriptions -n thetenant
+infrapi-cli get subscriptions -n acme
 # No resources found.
-infrapi-cli create subscriptions -n thetenant -d '{"api": "vault.infrapi.io"}'
+infrapi-cli create subscriptions -n acme -d '{"api": "vault.infrapi.io"}'
 # NAMESPACE  NAME               CREATED AT                 UPDATED AT
-# thetenant  vault.infrapi.io  2026-11-10T14:30:00+01:00  2026-11-10T14:30:00+01:00
-infrapi-cli get subscriptions -n thetenant vault.infrapi.io -o json
+# acme  vault.infrapi.io  2026-11-10T14:30:00+01:00  2026-11-10T14:30:00+01:00
+infrapi-cli get subscriptions -n acme vault.infrapi.io -o json
 # {"api": "vault.infrapi.io", "active": false, "state": "init", ...}
-infrapi-cli update subscriptions/sync -n thetenant vault.infrapi.io
-infrapi-cli delete subscriptions -n thetenant vault.infrapi.io
+infrapi-cli update subscriptions/sync -n acme vault.infrapi.io
+infrapi-cli delete subscriptions -n acme vault.infrapi.io
 # subscriptions "vault.infrapi.io" deleted
 
 # cluster-scoped: addressed as .../<resource>, never in a namespace
@@ -451,18 +451,18 @@ infrapi-cli create clustergroups -d '{"name": "g", "metadata": {...}, "groups": 
 
 ```bash
 # namespaced
-curl -s http://localhost:8080/apis/catalog.infrapi.io/v1/namespaces/thetenant/subscriptions \
+curl -s http://localhost:8080/apis/catalog.infrapi.io/v1/namespaces/acme/subscriptions \
   -H "Authorization: Bearer $TOKEN"
 # []
-curl -s -X POST http://localhost:8080/apis/catalog.infrapi.io/v1/namespaces/thetenant/subscriptions \
+curl -s -X POST http://localhost:8080/apis/catalog.infrapi.io/v1/namespaces/acme/subscriptions \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"api": "vault.infrapi.io"}'
 # {"api": "vault.infrapi.io", "active": false, "state": "init", ...}
-curl -s http://localhost:8080/apis/catalog.infrapi.io/v1/namespaces/thetenant/subscriptions/vault.infrapi.io \
+curl -s http://localhost:8080/apis/catalog.infrapi.io/v1/namespaces/acme/subscriptions/vault.infrapi.io \
   -H "Authorization: Bearer $TOKEN"
-curl -s -X PUT http://localhost:8080/apis/catalog.infrapi.io/v1/namespaces/thetenant/subscriptions/vault.infrapi.io/sync \
+curl -s -X PUT http://localhost:8080/apis/catalog.infrapi.io/v1/namespaces/acme/subscriptions/vault.infrapi.io/sync \
   -H "Authorization: Bearer $TOKEN"
-curl -s -X DELETE http://localhost:8080/apis/catalog.infrapi.io/v1/namespaces/thetenant/subscriptions/vault.infrapi.io \
+curl -s -X DELETE http://localhost:8080/apis/catalog.infrapi.io/v1/namespaces/acme/subscriptions/vault.infrapi.io \
   -H "Authorization: Bearer $TOKEN"
 
 # cluster-scoped
@@ -496,18 +496,18 @@ shows them); a name is one path segment, never `<name>/<action>`.
 **infrapi-cli**
 
 ```bash
-infrapi-cli update puppetreleases/promote apache -n acme -d '{"location": "emea-sandbox-dc1"}'
-infrapi-cli update rollouts/cancel 20261120-104500-ab12 -n acme   # no body
+infrapi-cli update vms/resize web-1 -n acme -d '{"size": "large"}'
+infrapi-cli update vms/reboot web-1 -n acme                     # no body
 infrapi-cli get apiregistrations/status vault.infrapi.io
-infrapi-cli auth can-i update puppetreleases/promote -n acme      # the same name
+infrapi-cli auth can-i update vms/resize -n acme                # the same name
 ```
 
 **curl**
 
 ```bash
-curl -s -X PUT http://localhost:8080/apis/puppet.giservices.io/v1/namespaces/acme/puppetreleases/apache/promote \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"location": "emea-sandbox-dc1"}'
-curl -s -X PUT http://localhost:8080/apis/puppet.giservices.io/v1/namespaces/acme/rollouts/20261120-104500-ab12/cancel \
+curl -s -X PUT http://localhost:8080/apis/compute.infrapi.io/v1/namespaces/acme/vms/web-1/resize \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"size": "large"}'
+curl -s -X PUT http://localhost:8080/apis/compute.infrapi.io/v1/namespaces/acme/vms/web-1/reboot \
   -H "Authorization: Bearer $TOKEN"
 curl -s http://localhost:8080/apis/catalog.infrapi.io/v1/apiregistrations/vault.infrapi.io/status \
   -H "Authorization: Bearer $TOKEN"
@@ -525,13 +525,13 @@ contract declares.
 **infrapi-cli**
 
 ```bash
-infrapi-cli get rollouts -n acme --field-selector environment=acme_sandbox,state=running
+infrapi-cli get vms -n acme --field-selector size=large,state=running
 ```
 
 **curl**
 
 ```bash
-curl -s 'http://localhost:8080/apis/puppet.giservices.io/v1/namespaces/acme/rollouts?environment=acme_sandbox&state=running' \
+curl -s 'http://localhost:8080/apis/compute.infrapi.io/v1/namespaces/acme/vms?size=large&state=running' \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -551,7 +551,7 @@ refused, the token never leaves the context's server.
 
 ```bash
 infrapi-cli get --raw /.well-known/kayra.json
-infrapi-cli get --raw '/apis/puppet.giservices.io/v1/namespaces/acme/modules?environment=acme_sandbox' -o yaml
+infrapi-cli get --raw '/apis/compute.infrapi.io/v1/namespaces/acme/vms/web-1/console?lines=50' -o yaml
 infrapi-cli create --raw /apis/catalog.infrapi.io/v1/apiregistrations -f registration.json
 ```
 
@@ -559,7 +559,7 @@ infrapi-cli create --raw /apis/catalog.infrapi.io/v1/apiregistrations -f registr
 
 ```bash
 curl -s http://localhost:8080/.well-known/kayra.json
-curl -s 'http://localhost:8080/apis/puppet.giservices.io/v1/namespaces/acme/modules?environment=acme_sandbox' \
+curl -s 'http://localhost:8080/apis/compute.infrapi.io/v1/namespaces/acme/vms/web-1/console?lines=50' \
   -H "Authorization: Bearer $TOKEN"
 curl -s -X POST http://localhost:8080/apis/catalog.infrapi.io/v1/apiregistrations \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d @registration.json

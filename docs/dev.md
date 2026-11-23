@@ -130,7 +130,7 @@ in with at Dex (`infrapi-cli auth login`), `dev.yaml`'s users:
 
   E-MAIL              PASSWORD  GROUPS
   admin@example.com   admin     sandbox-core-sysadmin
-  jdoe@example.com    jdoe      sandbox-thetenant-admins
+  jdoe@example.com    jdoe      sandbox-acme-admins
   nobody@example.com  nobody    -
 ```
 

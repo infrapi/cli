@@ -89,7 +89,7 @@ func matchResource(groups []discoveryGroup, typed string) (resourceRef, error) {
 		return resourceRef{}, errors.New("a resource is required")
 	}
 	if strings.Contains(typed, "/") && (sub == "" || strings.Contains(sub, "/")) {
-		return resourceRef{}, fmt.Errorf("%q: a resource, or a resource and one of its actions, puppetreleases/promote", typed)
+		return resourceRef{}, fmt.Errorf("%q: a resource, or a resource and one of its actions, vms/reboot", typed)
 	}
 	candidates := groups
 	if group != "" {

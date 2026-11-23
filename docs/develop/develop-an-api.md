@@ -1,22 +1,22 @@
 ---
 title: Develop an API
-description: Grow an API project from its contract - add a resource, generate its Go code, write it, register it in Kayra, onboard a tenant, call it as one of its users, then test, ship and release it.
+description: Grow an API project from its contract - add a resource, generate its Go code, write it, register it in Kayra, create a namespace, call it as one of its users, then test, ship and release it.
 weight: 20
 ---
 
 # Develop an API
 
 This grows the project of [Getting started](getting-started.md), `compute`,
-into an API of virtual machines, from its contract to a tenant's user
+into an API of virtual machines, from its contract to a user of a namespace
 creating one through the gateway:
 
 1. [Start](#1-start)
 2. [Add a resource](#2-add-a-resource)
 3. [Describe it in the contract](#3-describe-it-in-the-contract)
 4. [Run it, register it](#4-run-it-register-it)
-5. [Onboard a tenant](#5-onboard-a-tenant)
-6. [Subscribe the tenant](#6-subscribe-the-tenant)
-7. [Grant the tenant's users access](#7-grant-the-tenants-users-access)
+5. [Create a namespace](#5-create-a-namespace)
+6. [Subscribe the namespace](#6-subscribe-the-namespace)
+7. [Grant the namespace's users access](#7-grant-the-namespaces-users-access)
 8. [Call it](#8-call-it)
 9. [Write it](#9-write-it)
 10. [Change it](#10-change-it)
@@ -47,7 +47,7 @@ infrapi-cli dev contexts
 
 `infrapi-cli dev contexts` saves three contexts, all on the gateway:
 `dev-admin`, a sysadmin and the current one, `dev-jdoe`, a member of the
-tenant's group `sandbox-thetenant-admins`, and `dev-nobody`, who belongs to
+namespace's group `sandbox-acme-admins`, and `dev-nobody`, who belongs to
 nothing (see [the stack](dev-stack.md#users-and-tokens)). The `curl`
 examples read their tokens:
 
@@ -56,7 +56,7 @@ ADMIN=$(infrapi-cli auth context token dev-admin)
 JDOE=$(infrapi-cli auth context token dev-jdoe)
 NOBODY=$(infrapi-cli auth context token dev-nobody)
 GW=http://localhost:9080
-META='"metadata": {"namespace": "thetenant", "region": "eu-west-1", "platform": "sandbox"}'
+META='"metadata": {"namespace": "acme", "region": "eu-west-1", "platform": "sandbox"}'
 ```
 
 ## 2. Add a resource
@@ -235,24 +235,26 @@ curl -s -X POST $GW/apis/catalog.infrapi.io/v1/apiregistrations \
       "identity": {"jwks_from": "spec"}}'
 ```
 
-## 5. Onboard a tenant
+## 5. Create a namespace
 
-As `dev-admin`: a namespace, `thetenant`, and the cluster RBAC that lets
-its admins manage its subscriptions and its own RBAC.
+As `dev-admin`: a namespace, `acme`, and the cluster RBAC that lets
+its admins manage its subscriptions and its own RBAC. A namespace is not a
+tenant: a team or a customer owns one or several, `acme-prod` and
+`acme-dev` say (see [Multi-tenancy](https://infrapi.github.io/kayra/architecture/multi-tenancy/)).
 
 **infrapi-cli**
 
 ```bash
-infrapi-cli create namespaces -d '{"name": "thetenant"}'
+infrapi-cli create namespaces -d '{"name": "acme"}'
 
 infrapi-cli create clustergroups \
-  -d "{\"name\": \"thetenant-admins\", $META, \"groups\": [\"sandbox-core-sysadmin\", \"sandbox-thetenant-admins\"]}"
+  -d "{\"name\": \"acme-admins\", $META, \"groups\": [\"sandbox-core-sysadmin\", \"sandbox-acme-admins\"]}"
 
 infrapi-cli create clusterroles \
-  -d "{\"name\": \"thetenant-admin-role\", $META, \"rules\": [{\"apis\": [\"catalog.infrapi.io\", \"authorization.infrapi.io\"], \"resources\": [\"*\"], \"verbs\": [\"*\"]}]}"
+  -d "{\"name\": \"acme-admin-role\", $META, \"rules\": [{\"apis\": [\"catalog.infrapi.io\", \"authorization.infrapi.io\"], \"resources\": [\"*\"], \"verbs\": [\"*\"]}]}"
 
 infrapi-cli create clusterrolebindings \
-  -d "{\"name\": \"thetenant-admin-binding\", $META, \"role\": \"thetenant-admin-role\", \"groups\": [\"thetenant-admins\"]}"
+  -d "{\"name\": \"acme-admin-binding\", $META, \"role\": \"acme-admin-role\", \"groups\": [\"acme-admins\"]}"
 ```
 
 **curl**
@@ -260,42 +262,42 @@ infrapi-cli create clusterrolebindings \
 ```bash
 H=(-H "Authorization: Bearer $ADMIN" -H "Content-Type: application/json")
 
-curl -s -X POST $GW/apis/system.infrapi.io/v1/namespaces "${H[@]}" -d '{"name": "thetenant"}'
+curl -s -X POST $GW/apis/system.infrapi.io/v1/namespaces "${H[@]}" -d '{"name": "acme"}'
 
 curl -s -X POST $GW/apis/authorization.infrapi.io/v1/clustergroups "${H[@]}" \
-  -d "{\"name\": \"thetenant-admins\", $META, \"groups\": [\"sandbox-core-sysadmin\", \"sandbox-thetenant-admins\"]}"
+  -d "{\"name\": \"acme-admins\", $META, \"groups\": [\"sandbox-core-sysadmin\", \"sandbox-acme-admins\"]}"
 
 curl -s -X POST $GW/apis/authorization.infrapi.io/v1/clusterroles "${H[@]}" \
-  -d "{\"name\": \"thetenant-admin-role\", $META, \"rules\": [{\"apis\": [\"catalog.infrapi.io\", \"authorization.infrapi.io\"], \"resources\": [\"*\"], \"verbs\": [\"*\"]}]}"
+  -d "{\"name\": \"acme-admin-role\", $META, \"rules\": [{\"apis\": [\"catalog.infrapi.io\", \"authorization.infrapi.io\"], \"resources\": [\"*\"], \"verbs\": [\"*\"]}]}"
 
 curl -s -X POST $GW/apis/authorization.infrapi.io/v1/clusterrolebindings "${H[@]}" \
-  -d "{\"name\": \"thetenant-admin-binding\", $META, \"role\": \"thetenant-admin-role\", \"groups\": [\"thetenant-admins\"]}"
+  -d "{\"name\": \"acme-admin-binding\", $META, \"role\": \"acme-admin-role\", \"groups\": [\"acme-admins\"]}"
 ```
 
-## 6. Subscribe the tenant
+## 6. Subscribe the namespace
 
-A tenant uses an API once subscribed. The reconciler then runs the `dev`
+A namespace uses an API once subscribed. The reconciler then runs the `dev`
 pipeline ([the stack](dev-stack.md#the-reconcile-pipeline)) and activates
 the subscription.
 
 **infrapi-cli**
 
 ```bash
-infrapi-cli create subscriptions -n thetenant -d '{"api": "compute.infrapi.io"}'
+infrapi-cli create subscriptions -n acme -d '{"api": "compute.infrapi.io"}'
 
 # a few seconds later
-infrapi-cli get subscriptions -n thetenant compute.infrapi.io -o json
+infrapi-cli get subscriptions -n acme compute.infrapi.io -o json
 # {"api": "compute.infrapi.io", "active": true, "state": "success", "synced": true, …}
 ```
 
 **curl**
 
 ```bash
-curl -s -X POST $GW/apis/catalog.infrapi.io/v1/namespaces/thetenant/subscriptions "${H[@]}" \
+curl -s -X POST $GW/apis/catalog.infrapi.io/v1/namespaces/acme/subscriptions "${H[@]}" \
   -d '{"api": "compute.infrapi.io"}'
 
 # a few seconds later
-curl -s $GW/apis/catalog.infrapi.io/v1/namespaces/thetenant/subscriptions/compute.infrapi.io "${H[@]}"
+curl -s $GW/apis/catalog.infrapi.io/v1/namespaces/acme/subscriptions/compute.infrapi.io "${H[@]}"
 # {"api":"compute.infrapi.io","active":true,"state":"success","synced":true,…}
 ```
 
@@ -303,28 +305,28 @@ curl -s $GW/apis/catalog.infrapi.io/v1/namespaces/thetenant/subscriptions/comput
 
 ```text
 catalog: reconciler: … stored openapi spec of "compute.infrapi.io" (1 resources)
-catalog: reconciler: … step 0 POST http://apisix:9080/hooks/compute.infrapi.io/namespaces/thetenant/sync -> 200 …
-catalog: reconciler: … step 1 GET http://apisix:9080/hooks/compute.infrapi.io/namespaces/thetenant/sync/… -> 200 …
-catalog: reconciler: … activated subscription thetenant/compute.infrapi.io
+catalog: reconciler: … step 0 POST http://apisix:9080/hooks/compute.infrapi.io/namespaces/acme/sync -> 200 …
+catalog: reconciler: … step 1 GET http://apisix:9080/hooks/compute.infrapi.io/namespaces/acme/sync/… -> 200 …
+catalog: reconciler: … activated subscription acme/compute.infrapi.io
 ```
 
-## 7. Grant the tenant's users access
+## 7. Grant the namespace's users access
 
-`jdoe` is in the tenant's group, but nothing in the namespace grants it
+`jdoe` is in the namespace's group, but nothing in the namespace grants it
 `vms` yet: Kayra's check refuses them.
 
 **infrapi-cli**
 
 ```bash
-infrapi-cli get vms -n thetenant --context dev-jdoe
-# Error: Forbidden (403): you are not a member of namespace "thetenant": neither your user id nor any of your groups is listed in any of its groups
+infrapi-cli get vms -n acme --context dev-jdoe
+# Error: Forbidden (403): you are not a member of namespace "acme": neither your user id nor any of your groups is listed in any of its groups
 ```
 
 **curl**
 
 ```bash
-curl -s $GW/apis/compute.infrapi.io/v1/namespaces/thetenant/vms -H "Authorization: Bearer $JDOE"
-# {"title":"Forbidden","status":403,"detail":"you are not a member of namespace \"thetenant\": …"}
+curl -s $GW/apis/compute.infrapi.io/v1/namespaces/acme/vms -H "Authorization: Bearer $JDOE"
+# {"title":"Forbidden","status":403,"detail":"you are not a member of namespace \"acme\": …"}
 ```
 
 The namespace's own RBAC grants it: a group of the namespace naming the
@@ -334,26 +336,26 @@ two.
 **infrapi-cli**
 
 ```bash
-infrapi-cli create groups -n thetenant \
-  -d "{\"name\": \"devs\", $META, \"groups\": [\"sandbox-thetenant-admins\"]}"
+infrapi-cli create groups -n acme \
+  -d "{\"name\": \"devs\", $META, \"groups\": [\"sandbox-acme-admins\"]}"
 
-infrapi-cli create roles -n thetenant \
+infrapi-cli create roles -n acme \
   -d "{\"name\": \"vms-admin\", $META, \"rules\": [{\"apis\": [\"compute.infrapi.io\"], \"resources\": [\"vms\"], \"verbs\": [\"*\"]}, {\"apis\": [\"events.infrapi.io\"], \"resources\": [\"events\"], \"verbs\": [\"get\", \"list\"]}]}"
 
-infrapi-cli create rolebindings -n thetenant \
+infrapi-cli create rolebindings -n acme \
   -d "{\"name\": \"devs-vms-admin\", $META, \"role\": \"vms-admin\", \"groups\": [\"devs\"]}"
 
-infrapi-cli auth can-i create vms --namespace thetenant --context dev-jdoe
+infrapi-cli auth can-i create vms --namespace acme --context dev-jdoe
 # yes
 ```
 
 **curl**
 
 ```bash
-NS=$GW/apis/authorization.infrapi.io/v1/namespaces/thetenant
+NS=$GW/apis/authorization.infrapi.io/v1/namespaces/acme
 
 curl -s -X POST $NS/groups "${H[@]}" \
-  -d "{\"name\": \"devs\", $META, \"groups\": [\"sandbox-thetenant-admins\"]}"
+  -d "{\"name\": \"devs\", $META, \"groups\": [\"sandbox-acme-admins\"]}"
 
 curl -s -X POST $NS/roles "${H[@]}" \
   -d "{\"name\": \"vms-admin\", $META, \"rules\": [{\"apis\": [\"compute.infrapi.io\"], \"resources\": [\"vms\"], \"verbs\": [\"*\"]}, {\"apis\": [\"events.infrapi.io\"], \"resources\": [\"events\"], \"verbs\": [\"get\", \"list\"]}]}"
@@ -362,12 +364,12 @@ curl -s -X POST $NS/rolebindings "${H[@]}" \
   -d "{\"name\": \"devs-vms-admin\", $META, \"role\": \"vms-admin\", \"groups\": [\"devs\"]}"
 
 curl -s -X POST $GW/apis/authorization.infrapi.io/v1/check -H "Authorization: Bearer $JDOE" -H "Content-Type: application/json" \
-  -d '{"namespace": "thetenant", "api": "compute.infrapi.io", "resource": "vms", "verb": "create"}'
+  -d '{"namespace": "acme", "api": "compute.infrapi.io", "resource": "vms", "verb": "create"}'
 # {"allowed":true}
 ```
 
 A role names only resources the API's spec declares: Kayra answers 404 for
-any other. Its second rule lets the tenant read its
+any other. Its second rule lets the namespace's users read its
 [events](https://infrapi.github.io/kayra/architecture/events/).
 
 ## 8. Call it
@@ -378,20 +380,20 @@ the contract, authorized by Kayra, and answers 501: none is written yet.
 **infrapi-cli**
 
 ```bash
-infrapi-cli create vms -n thetenant -d '{"name": "web-1", "cpus": 2}' --context dev-jdoe
+infrapi-cli create vms -n acme -d '{"name": "web-1", "cpus": 2}' --context dev-jdoe
 # Error: Not Implemented (501): CreateVM is not implemented yet
 
-infrapi-cli create vms -n thetenant -d '{"name": "web-1", "cpus": 100}' --context dev-jdoe
+infrapi-cli create vms -n acme -d '{"name": "web-1", "cpus": 100}' --context dev-jdoe
 # Error: Invalid request (400): request body has an error: doesn't match schema #/components/schemas/VM: Error at "/cpus": number must be at most 64
 
-infrapi-cli get vms -n thetenant --context dev-nobody
-# Error: Forbidden (403): you are not a member of namespace "thetenant": …
+infrapi-cli get vms -n acme --context dev-nobody
+# Error: Forbidden (403): you are not a member of namespace "acme": …
 ```
 
 **curl**
 
 ```bash
-VMS=$GW/apis/compute.infrapi.io/v1/namespaces/thetenant/vms
+VMS=$GW/apis/compute.infrapi.io/v1/namespaces/acme/vms
 
 curl -s -X POST $VMS -H "Authorization: Bearer $JDOE" -H "Content-Type: application/json" -d '{"name": "web-1", "cpus": 2}'
 # {"title":"Not Implemented","status":501,"detail":"CreateVM is not implemented yet",…}
@@ -408,7 +410,7 @@ audit, `infrapi-cli dev logs kayra`.
 **infrapi-cli**
 
 ```bash
-infrapi-cli get events -n thetenant --context dev-jdoe
+infrapi-cli get events -n acme --context dev-jdoe
 # LAST SEEN  TYPE     REASON          OBJECT     COUNT  NOTE
 # 12s        Warning  VMCreateFailed  vms/web-1  1      CreateVM is not implemented yet
 ```
@@ -416,7 +418,7 @@ infrapi-cli get events -n thetenant --context dev-jdoe
 **curl**
 
 ```bash
-curl -s $GW/apis/events.infrapi.io/v1/namespaces/thetenant/events -H "Authorization: Bearer $JDOE"
+curl -s $GW/apis/events.infrapi.io/v1/namespaces/acme/events -H "Authorization: Bearer $JDOE"
 ```
 
 The reason comes from the operation, `createVM`: `VMCreated` once it is
@@ -485,17 +487,17 @@ two written ones to `http.StatusOK` and `http.StatusCreated`, then
 **infrapi-cli**
 
 ```bash
-infrapi-cli create vms -n thetenant -d '{"name": "web-1", "cpus": 2, "size": "small"}' --context dev-jdoe
+infrapi-cli create vms -n acme -d '{"name": "web-1", "cpus": 2, "size": "small"}' --context dev-jdoe
 # NAMESPACE  NAME   CREATED AT                 UPDATED AT
-# thetenant  web-1  2026-11-17T20:57:14+01:00  -
+# acme  web-1  2026-11-17T20:57:14+01:00  -
 
-infrapi-cli get vms -n thetenant -o json --context dev-jdoe
+infrapi-cli get vms -n acme -o json --context dev-jdoe
 # [{"name": "web-1", "created_at": "2026-11-17T19:57:14Z", "cpus": 2, "size": "small"}]
 
-infrapi-cli create vms -n thetenant -d '{"name": "web-1"}' --context dev-jdoe
-# Error: Already exists (409): vm "web-1" already exists in namespace "thetenant"
+infrapi-cli create vms -n acme -d '{"name": "web-1"}' --context dev-jdoe
+# Error: Already exists (409): vm "web-1" already exists in namespace "acme"
 
-infrapi-cli get vms -n thetenant web-1 --context dev-jdoe
+infrapi-cli get vms -n acme web-1 --context dev-jdoe
 # Error: Not Implemented (501): GetVM is not implemented yet
 ```
 
@@ -523,10 +525,10 @@ infrapi-cli app register   # Kayra reads the spec again; restart infrapi-cli app
 
 Then grant the new resource in a role, as in step 7. `infrapi-cli app
 register` registers the API again with a new `sync_id`: Kayra reads its
-spec, and resyncs every subscribed tenant.
+spec, and resyncs every subscribed namespace.
 
 The `dev` pipeline does nothing on the API's side, calling the gateway's
-`hooks` stub: an API that provisions something per tenant serves its own
+`hooks` stub: an API that provisions something per namespace serves its own
 sync endpoints, and its registration names a reconcile mode calling them
 (see Kayra's
 [subscriptions](https://github.com/infrapi/kayra/blob/main/docs/architecture/subscriptions.md#http-step-pipeline)).
