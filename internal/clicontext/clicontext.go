@@ -32,6 +32,12 @@ type Context struct {
 	RefreshToken string    `yaml:"refresh_token,omitempty"`
 	TokenType    string    `yaml:"token_type,omitempty"`
 	Expiry       time.Time `yaml:"expiry,omitempty"`
+	// ServiceAccount and IDToken are a service account's login
+	// (auth login --service-account --id-token): its client id, and where
+	// its platform's identity token is read, to ask a new token the same
+	// way when this one expires.
+	ServiceAccount string `yaml:"service_account,omitempty"`
+	IDToken        string `yaml:"id_token,omitempty"`
 	// Namespace is the namespace a namespaced resource is addressed in
 	// when a command names none (-n), like kubens: set with `auth
 	// context namespace`, kept across logins.

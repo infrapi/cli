@@ -121,6 +121,8 @@ func loginCommand() *cli.Command {
 			&cli.StringFlag{Name: "context-name", Usage: "name to save this login under (defaults to the sanitized --server host)"},
 			&cli.DurationFlag{Name: "timeout", Value: 2 * time.Minute, Usage: "how long to wait for the browser round trip before giving up (default 10m with --no-browser)"},
 			&cli.BoolFlag{Name: "no-browser", Usage: "for a terminal with no usable browser (SSH, container, air-gapped host): print the login URL to open on any other machine, then paste back the code it shows"},
+			&cli.StringFlag{Name: "service-account", Usage: "log in as a service account, <namespace>/<name>, with --id-token: no browser"},
+			&cli.StringFlag{Name: "id-token", Usage: "the platform identity token a service account is trusted as (its federated credentials): env:<NAME> (GitLab CI id_tokens), file:<PATH>, or github (GitHub Actions, permissions: id-token: write)"},
 		},
 		Action: runLogin,
 	}
@@ -133,6 +135,10 @@ func runLogin(ctx context.Context, cmd *cli.Command) error {
 	}
 	if cmd.Args().Len() > 0 {
 		return fmt.Errorf("login: unexpected argument %q: login takes none, only flags", cmd.Args().First())
+	}
+
+	if cmd.IsSet("service-account") || cmd.IsSet("id-token") {
+		return runFederatedLogin(ctx, cmd, server)
 	}
 
 	noBrowser := cmd.Bool("no-browser")
@@ -182,6 +188,39 @@ func runLogin(ctx context.Context, cmd *cli.Command) error {
 	// to be read back from.
 	_, _ = fmt.Fprintf(ui.Stderr(), "infrapi-cli: %s saved context %s to %s (now current)\n", ui.OK("logged in:"), ui.Name(name), path)
 	_, _ = fmt.Fprintf(ui.Stdout(), "infrapi-cli: run %s to print the bearer token\n", ui.Cmd("infrapi-cli auth context token"))
+	return nil
+}
+
+// runFederatedLogin logs a service account in with its platform's
+// identity token (a CI job's): no browser, no refresh token, the context
+// keeping where the identity token is read so a new token is asked when
+// this one expires (fresh).
+func runFederatedLogin(ctx context.Context, cmd *cli.Command, server string) error {
+	if !cmd.IsSet("service-account") || !cmd.IsSet("id-token") {
+		return fmt.Errorf("login: --service-account and --id-token go together")
+	}
+	clientID, err := oauth2login.ServiceAccount(cmd.String("service-account"))
+	if err != nil {
+		return fmt.Errorf("login: %w", err)
+	}
+	source := cmd.String("id-token")
+	loginCtx, cancel := context.WithTimeout(ctx, cmd.Duration("timeout"))
+	defer cancel()
+	result, err := oauth2login.FederatedLogin(loginCtx, server, clientID, source)
+	if err != nil {
+		return fmt.Errorf("login: %w", err)
+	}
+	name := cmp.Or(cmd.String("context-name"), sanitizeContextName(server))
+	f, err := clicontext.Load()
+	if err != nil {
+		return err
+	}
+	f.SetContext(name, clicontext.Context{Server: server, Token: result.AccessToken, TokenType: result.TokenType, Expiry: result.Expiry,
+		ServiceAccount: clientID, IDToken: source})
+	if err := f.Save(); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(ui.Stderr(), "infrapi-cli: %s as %s, saved context %s (now current)\n", ui.OK("logged in:"), ui.Name(clientID), ui.Name(name))
 	return nil
 }
 
@@ -484,6 +523,19 @@ func fresh(f *clicontext.File, name string) (clicontext.Context, error) {
 	if c.Token == "" {
 		return clicontext.Context{}, fmt.Errorf("context %s is logged out: run %s", name,
 			ui.Cmd("infrapi-cli auth login --server "+c.Server+" --context-name "+name))
+	}
+	if c.ServiceAccount != "" && !c.Expiry.IsZero() && time.Until(c.Expiry) <= renewBefore {
+		// a service account's: a new token, asked with the platform's
+		// identity token again
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		r, err := oauth2login.FederatedLogin(ctx, c.Server, c.ServiceAccount, c.IDToken)
+		if err != nil {
+			return clicontext.Context{}, fmt.Errorf("context %s: a new token of %s: %w", name, c.ServiceAccount, err)
+		}
+		c.Token, c.Expiry = r.AccessToken, r.Expiry
+		f.Contexts[name] = c
+		return c, f.Save()
 	}
 	if c.RefreshToken == "" || c.Expiry.IsZero() || time.Until(c.Expiry) > renewBefore {
 		return c, nil

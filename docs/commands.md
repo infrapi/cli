@@ -114,6 +114,8 @@ every API group's full name and short name from `GET /apis`.
 | `--context-name` | sanitized `--server` host | name to save this login under (see [context](#context)) |
 | `--timeout` | `2m` (`10m` with `--no-browser`) | how long to wait for the browser round trip |
 | `--no-browser` | off | log in from a terminal with no usable browser — see below |
+| `--service-account` | — | log in as a service account, `<namespace>/<name>`, with `--id-token`: see [As a service account](#as-a-service-account-ci) |
+| `--id-token` | — | where the platform's identity token is: `env:<NAME>`, `file:<PATH>` or `github` |
 
 #### Without a browser (SSH, container, air-gapped host)
 
@@ -136,6 +138,29 @@ The code is safe to carry across by hand: it is redeemable only with the
 PKCE verifier held by the terminal that printed the URL, once, within a
 minute. Paste it only into a terminal where you started the login
 yourself.
+
+#### As a service account (CI)
+
+A CI job logs in as one of Kayra's
+[service accounts](https://infrapi.github.io/kayra/architecture/service-accounts/)
+with its platform's own identity token, with no stored secret. The service
+account must have a federated credential matching the job (see
+[Federation](https://infrapi.github.io/kayra/architecture/federation/)).
+
+```bash
+# GitLab CI: the job's id_tokens entry, aud Kayra's URL
+infrapi-cli auth login --server https://kayra.example.com --service-account core/deployer --id-token env:KAYRA_ID_TOKEN
+# GitHub Actions, with permissions: id-token: write
+infrapi-cli auth login --server https://kayra.example.com --service-account core/deployer --id-token github
+# a projected Kubernetes service account token
+infrapi-cli auth login --server https://kayra.example.com --service-account core/deployer --id-token file:/var/run/secrets/kayra/token
+# infrapi-cli: logged in: as system:serviceaccount:core:deployer, saved context kayra.example.com (now current)
+```
+
+The token lasts 15 minutes and has no refresh token. When it expires, the
+next command asks for a new one with the identity token again (the context
+keeps where it is read), for as long as that one is valid: the job's
+lifetime.
 
 ### logout
 
