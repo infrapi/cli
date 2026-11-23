@@ -44,6 +44,10 @@ func TestMatchResource(t *testing.T) {
 		"nope":                    "no api group serves",
 		"nope.compute.infrapi.io": "serves no resource",
 		"vms.nope":                "no api group named",
+		"vms/stop":                `has no action "stop": reboot`,
+		"flavors/reboot":          `has no action "reboot", nor any other`,
+		"vms/":                    "one of its actions",
+		"vms/reboot/now":          "one of its actions",
 	} {
 		if _, err := matchResource(groups, typed); err == nil || !strings.Contains(err.Error(), msg) {
 			t.Errorf("%s: %v, want %q", typed, err, msg)

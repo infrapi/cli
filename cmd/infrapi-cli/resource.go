@@ -1,7 +1,9 @@
 package main
 
 // A resource is named as kubectl names one: its plural (or singular),
-// "vms", or its full name, plural then api group, "vms.compute.infrapi.io".
+// "vms", or its full name, plural then api group, "vms.compute.infrapi.io";
+// an action on an item as Kayra's roles name it, "vms/reboot", addressed
+// at .../vms/<name>/reboot.
 // GET /apis says which group serves it, at which version, and whether it
 // is namespaced: a namespaced one is addressed in -n, or the context's
 // namespace (`auth context namespace`), a cluster-scoped one never is.
@@ -26,7 +28,7 @@ import (
 type resourceRef struct {
 	Api      string // compute.infrapi.io
 	Version  string // v1
-	Resource string // vms, or a sub-resource as typed: vms/reboot
+	Resource string // vms, or an action, as Kayra's roles name it: vms/reboot
 	// Namespaced says where it is addressed. Unknown is a resource of a
 	// group named in full whose spec discovery doesn't have yet: it is
 	// addressed in a namespace when one is given.
@@ -34,9 +36,18 @@ type resourceRef struct {
 }
 
 // FullName is the resource's full name, plural then api group.
-func (r resourceRef) FullName() string {
+func (r resourceRef) FullName() string { return r.Base() + "." + r.Api }
+
+// Base is the resource without its action: vms for vms/reboot.
+func (r resourceRef) Base() string {
 	base, _, _ := strings.Cut(r.Resource, "/")
-	return base + "." + r.Api
+	return base
+}
+
+// Action is the action on an item, reboot for vms/reboot; empty for none.
+func (r resourceRef) Action() string {
+	_, action, _ := strings.Cut(r.Resource, "/")
+	return action
 }
 
 // errAmbiguous is a resource name several api groups serve.
@@ -66,13 +77,17 @@ func resolveResource(ctx context.Context, c clicontext.Context, typed string) (r
 }
 
 // matchResource is resolveResource's lookup. typed is <name>[.<group>]
-// [/<sub-resource>]; <name> matches a resource's plural or singular, and
-// <group> a group's full name, short name or first label.
+// [/<action>]; <name> matches a resource's plural or singular, <group> a
+// group's full name, short name or first label, and <action> one of the
+// resource's actions discovery lists (vms/reboot).
 func matchResource(groups []discoveryGroup, typed string) (resourceRef, error) {
 	base, sub, _ := strings.Cut(typed, "/")
 	name, group, _ := strings.Cut(base, ".")
 	if name == "" {
 		return resourceRef{}, errors.New("a resource is required")
+	}
+	if strings.Contains(typed, "/") && (sub == "" || strings.Contains(sub, "/")) {
+		return resourceRef{}, fmt.Errorf("%q: a resource, or a resource and one of its actions, puppetreleases/promote", typed)
 	}
 	candidates := groups
 	if group != "" {
@@ -92,6 +107,7 @@ func matchResource(groups []discoveryGroup, typed string) (resourceRef, error) {
 	}
 
 	var found []resourceRef
+	var noAction error
 	for _, g := range candidates {
 		for _, r := range g.Resources {
 			if strings.Contains(r.Name, "/") {
@@ -100,12 +116,19 @@ func matchResource(groups []discoveryGroup, typed string) (resourceRef, error) {
 			if singular, _ := app.Names(r.Name, "", ""); name != r.Name && name != singular {
 				continue
 			}
+			if sub != "" && !slices.ContainsFunc(g.Resources, func(a discoveryResource) bool { return a.Name == r.Name+"/"+sub }) {
+				noAction = errNoAction(g, r.Name, sub)
+				continue
+			}
 			version := g.Version
 			if version == "" {
 				version = "v1"
 			}
 			found = append(found, resourceRef{Api: g.Api, Version: version, Resource: withSub(r.Name, sub), Namespaced: r.Namespaced})
 		}
+	}
+	if len(found) == 0 && noAction != nil {
+		return resourceRef{}, noAction
 	}
 	switch {
 	case len(found) == 1:
@@ -125,6 +148,20 @@ func matchResource(groups []discoveryGroup, typed string) (resourceRef, error) {
 		return resourceRef{}, fmt.Errorf("api group %s serves no resource %q: list its resources with `infrapi-cli apis --api-group %s`", candidates[0].Api, name, candidates[0].Api)
 	}
 	return resourceRef{}, fmt.Errorf("no api group serves a resource %q: list them with `infrapi-cli apis`", name)
+}
+
+// errNoAction is an action resource has not in g: its actions listed.
+func errNoAction(g discoveryGroup, resource, action string) error {
+	var actions []string
+	for _, a := range g.Resources {
+		if b, act, ok := strings.Cut(a.Name, "/"); ok && b == resource {
+			actions = append(actions, act)
+		}
+	}
+	if len(actions) == 0 {
+		return fmt.Errorf("%s.%s has no action %q, nor any other", resource, g.Api, action)
+	}
+	return fmt.Errorf("%s.%s has no action %q: %s", resource, g.Api, action, strings.Join(actions, ", "))
 }
 
 func withSub(name, sub string) string {

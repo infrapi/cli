@@ -342,8 +342,8 @@ own resources use (see
 [RBAC & auth](https://infrapi.github.io/kayra/architecture/rbac-and-auth/#who-decides)):
 
 ```
-{server}/apis/<group>/<version>/namespaces/<namespace>/<resource>[/<name>]   # a namespaced resource
-{server}/apis/<group>/<version>/<resource>[/<name>]                          # a cluster-scoped one
+{server}/apis/<group>/<version>/namespaces/<namespace>/<resource>[/<name>[/<action>]]   # a namespaced resource
+{server}/apis/<group>/<version>/<resource>[/<name>[/<action>]]                          # a cluster-scoped one
 ```
 
 ### Naming a resource
@@ -405,7 +405,7 @@ infrapi-cli create subscriptions -n thetenant -d '{"api": "vault.infrapi.io"}'
 # thetenant  vault.infrapi.io  2026-11-10T14:30:00+01:00  2026-11-10T14:30:00+01:00
 infrapi-cli get subscriptions -n thetenant vault.infrapi.io -o json
 # {"api": "vault.infrapi.io", "active": false, "state": "init", ...}
-infrapi-cli update subscriptions -n thetenant vault.infrapi.io/sync -d '{}'
+infrapi-cli update subscriptions/sync -n thetenant vault.infrapi.io
 infrapi-cli delete subscriptions -n thetenant vault.infrapi.io
 # subscriptions "vault.infrapi.io" deleted
 
@@ -429,8 +429,7 @@ curl -s -X POST http://localhost:8080/apis/catalog.infrapi.io/v1/namespaces/thet
 curl -s http://localhost:8080/apis/catalog.infrapi.io/v1/namespaces/thetenant/subscriptions/vault.infrapi.io \
   -H "Authorization: Bearer $TOKEN"
 curl -s -X PUT http://localhost:8080/apis/catalog.infrapi.io/v1/namespaces/thetenant/subscriptions/vault.infrapi.io/sync \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{}'
+  -H "Authorization: Bearer $TOKEN"
 curl -s -X DELETE http://localhost:8080/apis/catalog.infrapi.io/v1/namespaces/thetenant/subscriptions/vault.infrapi.io \
   -H "Authorization: Bearer $TOKEN"
 
@@ -452,11 +451,87 @@ exactly how Kayra's own collection vs. item routes already distinguish
 the two) — there is no separate `list` verb. `create` is `POST`,
 `update` is `PUT`, `patch` is `PATCH`, `delete` is `DELETE` —
 `update`/`patch`/`delete` all require `<name>`; `create`/`update`/
-`patch` all require a body. A sub-resource action is just part of
-`<name>` (`vault/sync` above — "PATCH .../vm/:id/reboot" in the
-general case, see
-[RBAC & auth](https://infrapi.github.io/kayra/architecture/rbac-and-auth/#who-decides)),
-never a separate argument.
+`patch` all require a body, but for an action (below).
+
+### Actions
+
+An action on an item is named as Kayra's roles and `auth can-i` name it,
+`<resource>/<action>`, then the item: `update subscriptions/sync
+vault.infrapi.io` above is `PUT .../subscriptions/vault.infrapi.io/sync`.
+The action must be one discovery lists for the resource (`infrapi-cli apis`
+shows them); a name is one path segment, never `<name>/<action>`.
+
+**infrapi-cli**
+
+```bash
+infrapi-cli update puppetreleases/promote apache -n acme -d '{"location": "emea-sandbox-dc1"}'
+infrapi-cli update rollouts/cancel 20261120-104500-ab12 -n acme   # no body
+infrapi-cli get apiregistrations/status vault.infrapi.io
+infrapi-cli auth can-i update puppetreleases/promote -n acme      # the same name
+```
+
+**curl**
+
+```bash
+curl -s -X PUT http://localhost:8080/apis/puppet.giservices.io/v1/namespaces/acme/puppetreleases/apache/promote \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"location": "emea-sandbox-dc1"}'
+curl -s -X PUT http://localhost:8080/apis/puppet.giservices.io/v1/namespaces/acme/rollouts/20261120-104500-ab12/cancel \
+  -H "Authorization: Bearer $TOKEN"
+curl -s http://localhost:8080/apis/catalog.infrapi.io/v1/apiregistrations/vault.infrapi.io/status \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+An action's body is optional: without `-d` or `-f`, the request has none,
+and the API's contract says whether it needs one (a `400` when it does).
+
+### Field selectors
+
+`get --field-selector key=value[,key=value...]`, kubectl's syntax, sends
+each pair as a query parameter of the API's own: the filters its
+contract declares.
+
+**infrapi-cli**
+
+```bash
+infrapi-cli get rollouts -n acme --field-selector environment=acme_sandbox,state=running
+```
+
+**curl**
+
+```bash
+curl -s 'http://localhost:8080/apis/puppet.giservices.io/v1/namespaces/acme/rollouts?environment=acme_sandbox&state=running' \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Only `=`: `!=` and `==` are refused, a filter the API would not apply. A
+parameter its contract doesn't declare is the API's to refuse.
+
+### Raw requests
+
+`--raw <path>` sends a path of the context's server as it is, with its
+token: an operation the verbs don't address, its query included. No
+discovery, no `<resource>`, no `-n` or `--field-selector`; the body is
+optional, on every verb. A JSON response prints as JSON (`-o yaml` as
+YAML), anything else as it is. The path starts with `/`: a full URL is
+refused, the token never leaves the context's server.
+
+**infrapi-cli**
+
+```bash
+infrapi-cli get --raw /.well-known/kayra.json
+infrapi-cli get --raw '/apis/puppet.giservices.io/v1/namespaces/acme/modules?environment=acme_sandbox' -o yaml
+infrapi-cli create --raw /apis/catalog.infrapi.io/v1/apiregistrations -f registration.json
+```
+
+**curl**
+
+```bash
+curl -s http://localhost:8080/.well-known/kayra.json
+curl -s 'http://localhost:8080/apis/puppet.giservices.io/v1/namespaces/acme/modules?environment=acme_sandbox' \
+  -H "Authorization: Bearer $TOKEN"
+curl -s -X POST http://localhost:8080/apis/catalog.infrapi.io/v1/apiregistrations \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d @registration.json
+```
 
 The response body is printed pretty-printed as-is — this never
 interprets or re-shapes it, since it has no idea what shape any given

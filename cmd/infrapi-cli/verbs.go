@@ -4,19 +4,25 @@
 // trailing <name> lists the whole collection, exactly like `kubectl get`
 // does — there is no separate `list` verb.
 //
-//	{server}/apis/<api>/<version>[/namespaces/<namespace>]/<resource>[/<name>]
+//	{server}/apis/<api>/<version>[/namespaces/<namespace>]/<resource>[/<name>[/<action>]]
 //
 // authenticated with the current context's own bearer token. <resource>
 // is named as kubectl names one, "vms" or "vms.compute.infrapi.io" (see
-// resolveResource): discovery gives its api group, version and scope.
+// resolveResource): discovery gives its api group, version and scope. An
+// action is named as Kayra's roles name it, "vms/reboot", on an item:
+// update vms/reboot web is PUT .../vms/web/reboot, its body optional.
+// --field-selector k=v,... adds query parameters; --raw <path> sends any
+// path of the server, discovery skipped.
 package main
 
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -63,17 +69,21 @@ func verbCommands() []*cli.Command {
 }
 
 func verbCommand(verb, method string, spec verbSpec) *cli.Command {
-	argsUsage := "<resource>"
+	argsUsage := "<resource> | <resource>/<action> <name> | --raw <path>"
 	switch spec.name {
 	case nameOptional:
-		argsUsage = "<resource> [<name>]"
+		argsUsage = "<resource>[/<action>] [<name>] | --raw <path>"
 	case nameRequired:
-		argsUsage = "<resource> <name>"
+		argsUsage = "<resource>[/<action>] <name> | --raw <path>"
 	}
 	usage := fmt.Sprintf("%s a resource under any app's own API (kubectl-style)", verb)
 	flags := []cli.Flag{
 		&cli.StringFlag{Name: "namespace", Aliases: []string{"n"}, Usage: "the namespace of a namespaced resource (default: the context's, see `auth context namespace`); a cluster-scoped one has none"},
 		&cli.StringFlag{Name: "output", Aliases: []string{"o"}, Value: outputTable, Usage: "output format: table (namespace, name, created/updated at), or json / yaml (the full response)"},
+		&cli.StringFlag{Name: "raw", Usage: "send this path of the server as it is, /apis/...[?query]: no discovery, no <resource>, no -n; a body optional"},
+	}
+	if verb == "get" {
+		flags = append(flags, &cli.StringFlag{Name: "field-selector", Usage: "query parameters, key=value[,key=value...]: environment=acme_sandbox,state=running"})
 	}
 	if spec.requireBody {
 		flags = append(flags,
@@ -94,88 +104,164 @@ func verbCommand(verb, method string, spec verbSpec) *cli.Command {
 }
 
 func runVerb(ctx context.Context, cmd *cli.Command, verb, method string, spec verbSpec) error {
-	args := cmd.Args()
-	minArgs, maxArgs := 1, 1
-	if spec.name == nameOptional {
-		maxArgs = 2
-	}
-	if spec.name == nameRequired {
-		minArgs, maxArgs = 2, 2
-	}
-	if args.Len() < minArgs || args.Len() > maxArgs {
-		nameUsage := ""
-		switch spec.name {
-		case nameOptional:
-			nameUsage = " [<name>]"
-		case nameRequired:
-			nameUsage = " <name>"
-		}
-		return fmt.Errorf("%s: usage: infrapi-cli %s <resource>[.<api group>]%s [-n <namespace>]", verb, verb, nameUsage)
-	}
-	typed := args.Get(0)
-	var name string
-	if args.Len() == 2 {
-		name = args.Get(1)
-	}
-
 	output := cmd.String("output")
 	switch output {
 	case outputTable, outputJSON, outputYAML:
 	default:
 		return fmt.Errorf("%s: --output must be %q, %q or %q, got %q", verb, outputTable, outputJSON, outputYAML, output)
 	}
-
 	c, err := resolveContext(cmd)
 	if err != nil {
 		return fmt.Errorf("%s: %w", verb, err)
 	}
-
 	var body []byte
 	if spec.requireBody {
-		body, err = readVerbBody(cmd)
-		if err != nil {
+		if body, err = readVerbBody(cmd); err != nil {
 			return fmt.Errorf("%s: %w", verb, err)
 		}
-		if len(body) == 0 {
-			return fmt.Errorf("%s: a request body is required (--data or --filename)", verb)
-		}
+	}
+	if raw := cmd.String("raw"); raw != "" {
+		return runRaw(ctx, cmd, c, verb, method, raw, body)
 	}
 
+	args := cmd.Args()
+	if args.Len() < 1 || args.Len() > 2 {
+		return verbUsage(verb, spec)
+	}
+	typed := args.Get(0)
+	name := args.Get(1)
+	if strings.Contains(name, "/") {
+		base, action, _ := strings.Cut(name, "/")
+		return fmt.Errorf("%s: %q: a name is one path segment; an action goes with the resource: infrapi-cli %s %s/%s %s", verb, name, verb, typed, action, base)
+	}
 	ref, err := resolveResource(ctx, c, typed)
 	if err != nil {
 		warnAmbiguous(err)
+		return fmt.Errorf("%s: %w", verb, err)
+	}
+	action := ref.Action()
+	switch {
+	case action != "" && name == "":
+		return fmt.Errorf("%s: %s is an action on an item: infrapi-cli %s %s <name>", verb, ref.Resource, verb, typed)
+	case action == "" && spec.name == nameRequired && name == "",
+		action == "" && spec.name == nameNone && name != "":
+		return verbUsage(verb, spec)
+	}
+	// an action's body is its API's to require: none sent when none given
+	if spec.requireBody && action == "" && len(body) == 0 {
+		return fmt.Errorf("%s: a request body is required (--data or --filename)", verb)
+	}
+	query, err := fieldSelector(cmd)
+	if err != nil {
 		return fmt.Errorf("%s: %w", verb, err)
 	}
 	namespace, err := namespaceFor(ref, cmd.String("namespace"), c)
 	if err != nil {
 		return fmt.Errorf("%s: %w", verb, err)
 	}
-	resource := ref.Resource
-	path := fmt.Sprintf("/apis/%s/%s/%s", ref.Api, ref.Version, resource)
+	path := fmt.Sprintf("/apis/%s/%s/%s", ref.Api, ref.Version, ref.Base())
 	if namespace != "" {
-		path = fmt.Sprintf("/apis/%s/%s/namespaces/%s/%s", ref.Api, ref.Version, namespace, resource)
+		path = fmt.Sprintf("/apis/%s/%s/namespaces/%s/%s", ref.Api, ref.Version, namespace, ref.Base())
 	}
 	if name != "" {
-		path += "/" + name
+		path += "/" + url.PathEscape(name)
+	}
+	if action != "" {
+		path += "/" + action
+	}
+	if query != "" {
+		path += "?" + query
 	}
 
 	status, respBody, err := doVerbRequest(ctx, c, method, path, body)
 	if err != nil {
 		return fmt.Errorf("%s: %w", verb, err)
 	}
-
 	if status < 200 || status >= 300 {
-		switch output {
-		case outputJSON:
-			printJSON(os.Stdout, respBody)
-		case outputYAML:
-			printYAML(os.Stdout, respBody)
-		default:
-			renderProblem(os.Stderr, status, respBody)
-		}
-		os.Exit(1)
+		failVerb(output, status, respBody)
 	}
-	return printVerbResponse(os.Stdout, os.Stderr, output, verb, resource, name, namespace, respBody)
+	return printVerbResponse(os.Stdout, os.Stderr, output, verb, ref.Base(), name, namespace, respBody)
+}
+
+func verbUsage(verb string, spec verbSpec) error {
+	nameUsage := ""
+	switch spec.name {
+	case nameOptional:
+		nameUsage = " [<name>]"
+	case nameRequired:
+		nameUsage = " <name>"
+	}
+	return fmt.Errorf("%s: usage: infrapi-cli %s <resource>[.<api group>]%s [-n <namespace>], infrapi-cli %s <resource>/<action> <name>, or infrapi-cli %s --raw <path>",
+		verb, verb, nameUsage, verb, verb)
+}
+
+// failVerb prints a failed response, and exits 1.
+func failVerb(output string, status int, body []byte) {
+	switch output {
+	case outputJSON:
+		printJSON(os.Stdout, body)
+	case outputYAML:
+		printYAML(os.Stdout, body)
+	default:
+		renderProblem(os.Stderr, status, body)
+	}
+	os.Exit(1)
+}
+
+// fieldSelector is --field-selector as query parameters: kubectl's
+// syntax, key=value,..., each one a parameter of the API's own.
+func fieldSelector(cmd *cli.Command) (string, error) {
+	if !cmd.IsSet("field-selector") {
+		return "", nil
+	}
+	q := url.Values{}
+	for _, kv := range strings.Split(cmd.String("field-selector"), ",") {
+		k, v, ok := strings.Cut(strings.TrimSpace(kv), "=")
+		switch {
+		case !ok || k == "":
+			return "", fmt.Errorf("--field-selector %q: key=value[,key=value...]", cmd.String("field-selector"))
+		case strings.HasSuffix(k, "!") || strings.HasPrefix(v, "="):
+			return "", fmt.Errorf("--field-selector %q: only key=value, each a query parameter the API filters on", kv)
+		}
+		q.Add(k, v)
+	}
+	return q.Encode(), nil
+}
+
+// runRaw sends path, the server's, as it is: an API's operation the verbs
+// don't address, its query included.
+func runRaw(ctx context.Context, cmd *cli.Command, c clicontext.Context, verb, method, path string, body []byte) error {
+	switch {
+	case !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//"):
+		return fmt.Errorf("%s: --raw %q: a path of the server, /apis/...: the token goes to the context's server only", verb, path)
+	case cmd.Args().Len() > 0:
+		return fmt.Errorf("%s: --raw takes no <resource> or <name>", verb)
+	case cmd.IsSet("namespace") || cmd.IsSet("field-selector"):
+		return fmt.Errorf("%s: --raw is the whole path: no -n, no --field-selector", verb)
+	}
+	if len(body) == 0 {
+		body = nil
+	}
+	status, respBody, err := doVerbRequest(ctx, c, method, path, body)
+	if err != nil {
+		return fmt.Errorf("%s: %w", verb, err)
+	}
+	output := cmd.String("output")
+	if status < 200 || status >= 300 {
+		failVerb(output, status, respBody)
+	}
+	switch {
+	case len(bytes.TrimSpace(respBody)) == 0:
+		return nil
+	case output == outputYAML:
+		printYAML(os.Stdout, respBody)
+	case json.Valid(respBody):
+		printJSON(os.Stdout, respBody)
+	default:
+		_, err = os.Stdout.Write(respBody)
+		return err
+	}
+	return nil
 }
 
 // printVerbResponse prints a successful response: the full body for -o
