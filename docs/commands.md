@@ -79,7 +79,7 @@ configures: every command here only ever talks to that server's own API.
 ### login
 
 Logs in at a Kayra server you only know the URL of, through the browser:
-the server's [authorization server](https://infrapi.github.io/kayra/architecture/oauth2-server/)
+the server's [authorization server](https://infrapi.github.io/kayra/architecture/auth/oauth2-server/)
 sends you to its login provider (Okta, say), and the context keeps the
 server's own tokens. The access token lasts 15 minutes; every command
 renews it before it expires, with the refresh token, without the browser,
@@ -142,10 +142,10 @@ yourself.
 #### As a service account (CI)
 
 A CI job logs in as one of Kayra's
-[service accounts](https://infrapi.github.io/kayra/architecture/service-accounts/)
+[service accounts](https://infrapi.github.io/kayra/architecture/auth/service-accounts/)
 with its platform's own identity token, with no stored secret. The service
 account must have a federated credential matching the job (see
-[Federation](https://infrapi.github.io/kayra/architecture/federation/)).
+[Federation](https://infrapi.github.io/kayra/architecture/auth/federation/)).
 
 ```bash
 # GitLab CI: the job's id_tokens entry, aud Kayra's URL
@@ -269,7 +269,7 @@ than managing it. Like every command, they take
 #### can-i
 
 Mirrors `kubectl auth can-i`: asks the server's own
-[check endpoint](https://infrapi.github.io/kayra/architecture/rbac-and-auth/#who-decides),
+[check endpoint](https://infrapi.github.io/kayra/architecture/auth/rbac-and-auth/#who-decides),
 the one its [`/.well-known/kayra.json`](https://infrapi.github.io/kayra/packages/discovery/) names,
 whether the current context's already-authenticated identity is
 granted `<verb>` on `<resource>`, named as
@@ -364,7 +364,7 @@ listed with `-`.
 kubectl-style top-level verbs — a thin, generic REST client against
 *any* app's own API, following the exact route convention Kayra's
 own resources use (see
-[RBAC & auth](https://infrapi.github.io/kayra/architecture/rbac-and-auth/#who-decides)):
+[RBAC & auth](https://infrapi.github.io/kayra/architecture/auth/rbac-and-auth/#who-decides)):
 
 ```
 {server}/apis/<group>/<version>/namespaces/<namespace>/<resource>[/<name>[/<action>]]   # a namespaced resource

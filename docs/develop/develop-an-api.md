@@ -212,7 +212,7 @@ The registration also gives the API an identity of its own,
 `/apis/compute.infrapi.io/v1/-/jwks.json`, which the API serves from
 `INFRAPI_IDENTITY_KEY_PATH`, the dev stack's `keys/app-identity.pem`. With
 it, your code gets tokens as the API, to call Kayra or another API: see
-[API identity](https://infrapi.github.io/kayra/architecture/api-identity/).
+[API identity](https://infrapi.github.io/kayra/architecture/auth/api-identity/).
 
 `infrapi-cli app register` is two calls, which you make yourself where there
 is no dev stack, its route set by whoever runs the gateway:

@@ -54,7 +54,7 @@ creates its parent directory at `0700` and writes the file itself at
 ## oauth2login
 
 infrapi-cli's OAuth 2.1 client of Kayra's
-[authorization server](https://infrapi.github.io/kayra/architecture/oauth2-server/):
+[authorization server](https://infrapi.github.io/kayra/architecture/auth/oauth2-server/):
 it knows nothing but a server URL, and reads its endpoints from
 `/.well-known/oauth-authorization-server`. infrapi-cli is Kayra's built-in
 client, `infrapi-cli`: public, first-party (no consent page).

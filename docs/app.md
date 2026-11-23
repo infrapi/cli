@@ -149,7 +149,7 @@ the API in Kayra, as the current context (`--context` for another):
 Registered again, the API gets a new `sync_id`: Kayra reads its spec again,
 and resyncs the namespaces subscribed to it.
 
-`identity` is the API's [own identity](https://infrapi.github.io/kayra/architecture/api-identity/),
+`identity` is the API's [own identity](https://infrapi.github.io/kayra/architecture/auth/api-identity/),
 `system:api:<group>`:
 
 - **By default, `jwks_from: spec`:** Kayra reads the keys the API serves at
