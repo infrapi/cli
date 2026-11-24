@@ -23,6 +23,18 @@ Or with Go 1.27.4 or later:
 go install github.com/infrapi/cli/cmd/infrapi-cli@latest
 ```
 
+Or as a container image, `ghcr.io/infrapi/cli`, for a CI job or a script
+(`linux/amd64` and `linux/arm64`, tagged with the version, its minor and
+`latest`). Its entrypoint is `infrapi-cli`; it has no `dev` (compose runs on
+the host) and no Go for `app`:
+
+```bash
+podman run --rm ghcr.io/infrapi/cli:latest --version
+```
+
+In a GitLab CI job, set `entrypoint: [""]`: the job runs a shell in the
+image.
+
 <details>
 <summary>Building from source instead</summary>
 
