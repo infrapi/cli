@@ -26,14 +26,16 @@ in as their administrator.
 stack, runs the stack, and is the client you call Kayra with: nothing else
 to install to drive it, no `make`.
 
+With [bin](https://github.com/marcosnils/bin/), which picks the release
+archive matching your OS and architecture:
+
 ```bash
-go install github.com/infrapi/cli/cmd/infrapi-cli@latest
+bin install github.com/infrapi/cli ~/.local/bin/infrapi-cli
 infrapi-cli --version
 ```
 
-Or take a release archive: see
-[installing infrapi-cli](https://infrapi.github.io/cli/getting-started/#1-install).
-
+Or with Go, or as a container image: see [installing
+infrapi-cli](https://infrapi.github.io/cli/getting-started/#1-install).
 ## 2. Check the prerequisites
 
 | What | Why | Check with |

@@ -14,7 +14,7 @@ InfraPI's command line, one binary for three things:
   `dev down`...), no `make` needed.
 
 ```bash
-go install github.com/infrapi/cli/cmd/infrapi-cli@latest
+bin install github.com/infrapi/cli ~/.local/bin/infrapi-cli   # or: go install github.com/infrapi/cli/cmd/infrapi-cli@latest
 
 infrapi-cli auth login --server https://kayra.example.com
 infrapi-cli apis

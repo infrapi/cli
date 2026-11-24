@@ -8,37 +8,45 @@ weight: 20
 
 ## 1. Install
 
-Every [GitHub release](https://github.com/infrapi/cli/releases) publishes
-an archive per OS and architecture (`infrapi-cli_<version>_<os>_<arch>`).
+`infrapi-cli` is published on every
+[release](https://github.com/infrapi/cli/releases): an archive per OS and
+architecture (`infrapi-cli_<version>_<os>_<arch>`), with `checksums.txt`.
 Install it with [bin](https://github.com/marcosnils/bin/), which picks the
-archive matching your machine and tracks it for `bin update`:
+archive matching your OS and architecture, puts the binary on your `PATH`
+and tracks it for `bin update`:
 
 ```bash
 bin install github.com/infrapi/cli ~/.local/bin/infrapi-cli
+infrapi-cli --version
 ```
 
-Or with Go 1.27.4 or later:
+### Or the container image
 
-```bash
-go install github.com/infrapi/cli/cmd/infrapi-cli@latest
-```
-
-Or as a container image, `ghcr.io/infrapi/cli`, for a CI job or a script
-(`linux/amd64` and `linux/arm64`, tagged with the version, its minor and
-`latest`). Its entrypoint is `infrapi-cli`; it has no `dev` (compose runs on
-the host) and no Go for `app`:
+Every release also publishes an image, `ghcr.io/infrapi/cli`, for
+`linux/amd64` and `linux/arm64`, tagged with the version
+(`<major>.<minor>.<patch>`), its minor (`<major>.<minor>`) and `latest`: pin
+one of the first two in a deployment. It runs as an unprivileged user (uid
+10001). It is for a CI job or a script: its entrypoint is `infrapi-cli`, it
+has no Go for `app`, and `dev` runs compose on the host, not in it. In a
+GitLab CI job, set `entrypoint: [""]`: the job runs a shell in the image.
 
 ```bash
 podman run --rm ghcr.io/infrapi/cli:latest --version
 ```
 
-In a GitLab CI job, set `entrypoint: [""]`: the job runs a shell in the
-image.
+### Or with Go
+
+With Go 1.27.4 or later:
+
+```bash
+go install github.com/infrapi/cli/cmd/infrapi-cli@latest
+```
 
 <details>
 <summary>Building from source instead</summary>
 
 ```bash
+git clone https://github.com/infrapi/cli && cd cli
 go build -o infrapi-cli ./cmd/infrapi-cli
 ```
 
