@@ -15,10 +15,13 @@ import (
 const AppEnv = ".infrapi-dev/app.env"
 
 // Run runs the project in root against the dev stack, with its settings,
-// .infrapi-dev/app.env: go run ./cmd/<name>, printed first with a +
-// prefix. It returns when the API stops.
-func Run(ctx context.Context, root string, out io.Writer) error {
-	envFile := filepath.Join(root, AppEnv)
+// envFile (the stack's .infrapi-dev/app.env; root's when empty): go run
+// ./cmd/<name>, printed first with a + prefix. It returns when the API
+// stops.
+func Run(ctx context.Context, root, envFile string, out io.Writer) error {
+	if envFile == "" {
+		envFile = filepath.Join(root, AppEnv)
+	}
 	env, err := readDotenv(envFile)
 	if err != nil {
 		return fmt.Errorf("app run: %w: infrapi-cli dev init renders it", err)

@@ -413,8 +413,18 @@ per-namespace groups/roles/rolebindings) and cluster-scoped
 `clustergroups`/`clusterroles`/`clusterrolebindings`):
 
 Responses print as a table like `auth context list`'s: `NAMESPACE` (only with
-`-n`), `NAME` (the resource's `name`, or `api` for a subscription),
-`CREATED AT` and `UPDATED AT`, in local time. `-o json` or `-o yaml` prints
+`-n`), `NAME` (the resource's `name`, `api` for a subscription, or `id`),
+`CREATED AT` and `UPDATED AT`, in local time. A resource without
+timestamps, an app's often, shows its first five string, number or boolean
+fields instead, in the order the API sent them:
+
+```bash
+infrapi-cli get locations
+# NAME              REGION  PLATFORM  DATACENTER
+# emea-sandbox-dc1  emea    sandbox   dc1
+```
+
+`-o json` or `-o yaml` prints
 the full response instead (YAML keeps the server's field order). A response that isn't a named resource (a status
 document, say) always prints as JSON, so nothing is hidden. An empty list
 prints `No resources found.` on stderr and no rows on stdout. Errors print

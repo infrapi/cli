@@ -2,7 +2,9 @@ package main
 
 // Human-readable rendering of the generic verbs' responses (see
 // verbs.go): a table of NAMESPACE (namespaced resources only), NAME,
-// CREATED AT and UPDATED AT — the same style as `auth context list`. Use
+// CREATED AT and UPDATED AT — the same style as `auth context list`. A
+// resource without timestamps, an app's often, shows its first scalar
+// fields instead (state, version...), in the order the API sent them. Use
 // -o json or -o yaml for every field.
 
 import (
@@ -29,8 +31,9 @@ const (
 
 // nameKeys are the fields a resource's name is read from, first match
 // wins: "name" for almost everything, "api" for a subscription (which is
-// named by the api it subscribes to).
-var nameKeys = []string{"name", "api"}
+// named by the api it subscribes to), "id" for what an API names itself
+// (a rollout, say).
+var nameKeys = []string{"name", "api", "id"}
 
 // renderTable writes body as a table to stdout. namespace is the -n
 // value: non-empty adds the NAMESPACE column. ok is false when body
@@ -52,18 +55,124 @@ func renderTable(stdout, stderr io.Writer, body []byte, namespace string) (ok bo
 	}
 
 	header := []string{"NAME", "CREATED AT", "UPDATED AT"}
+	cellsOf := func(row map[string]any) []string {
+		return []string{rowName(row), timestampCell(row["created_at"]), timestampCell(row["updated_at"])}
+	}
+	if !anyTimestamp(rows) {
+		keys := scalarKeys(body, rows)
+		header = []string{"NAME"}
+		for _, k := range keys {
+			header = append(header, strings.ToUpper(strings.ReplaceAll(k, "_", " ")))
+		}
+		cellsOf = func(row map[string]any) []string {
+			cell := []string{rowName(row)}
+			for _, k := range keys {
+				cell = append(cell, scalarCell(row[k]))
+			}
+			return cell
+		}
+	}
 	if namespace != "" {
 		header = append([]string{"NAMESPACE"}, header...)
 	}
 	cells := make([][]string, 0, len(rows))
 	for _, row := range rows {
-		cell := []string{rowName(row), timestampCell(row["created_at"]), timestampCell(row["updated_at"])}
+		cell := cellsOf(row)
 		if namespace != "" {
 			cell = append([]string{namespace}, cell...)
 		}
 		cells = append(cells, cell)
 	}
 	return true, ui.Table(stdout, header, cells, nil)
+}
+
+// maxScalarColumns caps the columns a resource without timestamps shows.
+const maxScalarColumns = 5
+
+func anyTimestamp(rows []map[string]any) bool {
+	for _, row := range rows {
+		if timestampCell(row["created_at"]) != "-" || timestampCell(row["updated_at"]) != "-" {
+			return true
+		}
+	}
+	return false
+}
+
+// scalarKeys are the columns of rows without timestamps: the top-level
+// fields holding a string, number or boolean in some row, but the name,
+// in the order the first object of body has them (a JSON object's order
+// is the API's; a Go map has none), then any other row's; at most
+// maxScalarColumns.
+func scalarKeys(body []byte, rows []map[string]any) []string {
+	name := ""
+	for _, k := range nameKeys {
+		if _, ok := rows[0][k].(string); ok {
+			name = k
+			break
+		}
+	}
+	var keys []string
+	seen := map[string]bool{name: true}
+	add := func(k string) {
+		if seen[k] || len(keys) == maxScalarColumns {
+			return
+		}
+		for _, row := range rows {
+			if scalarCell(row[k]) != "" {
+				seen[k] = true
+				keys = append(keys, k)
+				return
+			}
+		}
+	}
+	for _, k := range objectKeys(body) {
+		add(k)
+	}
+	for _, row := range rows {
+		for k := range row {
+			add(k)
+		}
+	}
+	return keys
+}
+
+// objectKeys are the keys of body's first object, in order: body is an
+// object, or a list of them.
+func objectKeys(body []byte) []string {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	if t, err := dec.Token(); err != nil || t == json.Delim('[') {
+		if t, err = dec.Token(); err != nil || t != json.Delim('{') {
+			return nil
+		}
+	}
+	var keys []string
+	for dec.More() {
+		t, err := dec.Token()
+		if err != nil {
+			return keys
+		}
+		k, _ := t.(string)
+		keys = append(keys, k)
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return keys
+		}
+	}
+	return keys
+}
+
+// scalarCell renders a string, number or boolean; "" for anything else
+// (an object, a list, null), which never makes a column.
+func scalarCell(v any) string {
+	switch v := v.(type) {
+	case string:
+		return v
+	case bool:
+		return strconv.FormatBool(v)
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	}
+	return ""
 }
 
 // resourceRows decodes body as a list of resources, or a single one as

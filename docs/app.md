@@ -127,17 +127,26 @@ infrapi-cli app run
 
 Runs the API against the dev stack, `go run ./cmd/<name>`, with
 `.infrapi-dev/app.env` as `INFRAPI_CONFIG_DOTENV_FILE` and in its
-environment. It refuses a `.infrapi-dev/` that is not `dev.yaml`'s
-(`infrapi-cli dev up --force` applies it), and stops with Ctrl-C.
+environment. The stack is the project's `dev.yaml`, or the one `--config`
+or `DEV_CONFIG` names, as for the `dev` commands: `dev.local.yaml`, say,
+holding what git must not see. It refuses a `.infrapi-dev/` that is not
+that file's (`infrapi-cli dev up --force` applies it), and stops with
+Ctrl-C.
+
+```bash
+export DEV_CONFIG=dev.local.yaml
+infrapi-cli dev up --force
+infrapi-cli app run             # with dev.local.yaml's app.env
+```
 
 ## app register
 
 ```bash
-infrapi-cli app register [--owner dev] [--upstream host:port] [--no-route] [--jwks <file> | --no-identity]
+infrapi-cli app register [--owner dev] [--upstream host:port] [--no-route] [--jwks <file> | --no-identity] [--config <dev.yaml>]
 ```
 
-With the project's `dev.yaml`, it routes the dev stack's gateway to the API
-first, `/apis/<group>/*` to `<host-alias>:<app.port>` (as `dev api add`),
+With a dev stack (the project's `dev.yaml`, or `--config`'s or
+`DEV_CONFIG`'s), it routes the dev stack's gateway to the API first, `/apis/<group>/*` to `<host-alias>:<app.port>` (as `dev api add`),
 or to `--upstream`; `--no-route` leaves the routes alone. Then it registers
 the API in Kayra, as the current context (`--context` for another):
 

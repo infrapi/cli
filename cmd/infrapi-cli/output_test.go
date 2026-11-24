@@ -205,3 +205,23 @@ func TestRenderEvents(t *testing.T) {
 		t.Errorf("%s", out.String())
 	}
 }
+
+// A resource without timestamps, an app's: its first scalar fields, in the
+// API's order, not empty CREATED AT and UPDATED AT columns.
+func TestRenderTableWithoutTimestamps(t *testing.T) {
+	body := []byte(`[
+		{"id":"20261124-145631-56e59f","release":"apache","version":"12.3.1","state":"succeeded","locations":[{"name":"dc1"}],"created_by":"jdoe","created_at_unix":1,"resolution":{}},
+		{"id":"20261124-150000-aaaaaa","release":"stdlib","version":"9.7.0","state":"running","created_by":"jdoe"}
+	]`)
+	var out, errOut bytes.Buffer
+	if ok, err := renderTable(&out, &errOut, body, "acme"); err != nil || !ok {
+		t.Fatalf("renderTable: ok=%v err=%v", ok, err)
+	}
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if got := strings.Join(strings.Fields(lines[0]), " "); got != "NAMESPACE NAME RELEASE VERSION STATE CREATED BY CREATED AT UNIX" {
+		t.Fatalf("header = %q", lines[0])
+	}
+	if got := strings.Join(strings.Fields(lines[2]), " "); got != "acme 20261124-150000-aaaaaa stdlib 9.7.0 running jdoe" {
+		t.Fatalf("row 2 = %q", lines[2])
+	}
+}

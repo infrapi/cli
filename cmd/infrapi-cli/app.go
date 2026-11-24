@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -68,6 +69,7 @@ func appCommand() *cli.Command {
 			{
 				Name:   "run",
 				Usage:  "run the API against the dev stack, with .infrapi-dev/app.env: go run ./cmd/<name>",
+				Flags:  []cli.Flag{devConfigFlag()},
 				Action: runAppRun,
 			},
 			{
@@ -79,6 +81,7 @@ func appCommand() *cli.Command {
 					&cli.BoolFlag{Name: "no-route", Usage: "register only: leave the gateway's routes alone"},
 					&cli.StringFlag{Name: "jwks", Usage: "pin the API's identity keys: a JWK set file, or a PEM key whose public half is sent (default: the keys the API serves at -/jwks.json)"},
 					&cli.BoolFlag{Name: "no-identity", Usage: "register the API without an identity: it gets no token"},
+					devConfigFlag(),
 				},
 				Action: runAppRegister,
 			},
@@ -165,24 +168,47 @@ func runAppAdd(_ context.Context, cmd *cli.Command) error {
 	return nil
 }
 
-func runAppRun(ctx context.Context, _ *cli.Command) error {
+// devConfigFlag is the dev stack an app command works with, as the dev
+// commands read it: --config, or DEV_CONFIG (dev.local.yaml, say).
+func devConfigFlag() cli.Flag {
+	return &cli.StringFlag{Name: "config", Sources: cli.EnvVars("DEV_CONFIG"), Usage: "the dev stack's dev.yaml (default: the project's)"}
+}
+
+// projectStack is the dev stack the project runs against: --config's or
+// DEV_CONFIG's dev.yaml, or the project's own; nil, with no error, when
+// the project has none and none is given.
+func projectStack(cmd *cli.Command, root string) (*dev.Stack, error) {
+	path := cmd.String("config")
+	if path == "" {
+		path = filepath.Join(root, dev.ConfigName)
+		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+	}
+	return dev.OpenStack(dev.StackOptions{Config: path})
+}
+
+func runAppRun(ctx context.Context, cmd *cli.Command) error {
 	root, err := app.FindRoot(".")
 	if err != nil {
 		return err
 	}
-	// what it runs with is dev.yaml's: a stale .infrapi-dev/ is refused
-	if _, err := os.Stat(filepath.Join(root, dev.ConfigName)); err == nil {
-		s, err := dev.OpenStack(dev.StackOptions{Config: filepath.Join(root, dev.ConfigName)})
-		if err != nil {
-			return err
-		}
+	// what it runs with is dev.yaml's (DEV_CONFIG's): a stale
+	// .infrapi-dev/ is refused
+	envFile := ""
+	s, err := projectStack(cmd, root)
+	if err != nil {
+		return err
+	}
+	if s != nil {
 		if _, err := s.Render(dev.RenderOptions{}); err != nil {
-			return fmt.Errorf("app run: %w: infrapi-cli dev up --force applies dev.yaml", err)
+			return fmt.Errorf("app run: %w: infrapi-cli dev up --force applies %s", err, filepath.Base(s.ConfigPath))
 		}
+		envFile = filepath.Join(s.Out, "app.env")
 	}
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return app.Run(ctx, root, os.Stdout)
+	return app.Run(ctx, root, envFile, os.Stdout)
 }
 
 func runAppGenerate(_ context.Context, _ *cli.Command) error {
@@ -204,6 +230,24 @@ func runAppGenerate(_ context.Context, _ *cli.Command) error {
 	return nil
 }
 
+// routeGateway routes the dev stack's gateway to the API, when there is a
+// stack (--config, DEV_CONFIG, or the project's dev.yaml).
+func routeGateway(ctx context.Context, cmd *cli.Command, root, group string, out io.Writer) error {
+	s, err := projectStack(cmd, root)
+	if err != nil || s == nil {
+		return err
+	}
+	upstream := cmd.String("upstream")
+	if upstream == "" {
+		upstream = fmt.Sprintf("%s:%d", s.HostAlias, s.Config.App.Port)
+	}
+	if err := s.Gateway().AddAPI(ctx, group, upstream); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(out, "gateway: %s -> %s\n", ui.Name("/apis/"+group+"/*"), ui.Name(upstream))
+	return nil
+}
+
 func runAppRegister(ctx context.Context, cmd *cli.Command) error {
 	root, err := app.FindRoot(".")
 	if err != nil {
@@ -216,22 +260,10 @@ func runAppRegister(ctx context.Context, cmd *cli.Command) error {
 	out := ui.Stdout()
 
 	// the gateway first: the reconciler fetches the API's spec through it
-	devConfig := filepath.Join(root, dev.ConfigName)
-	if _, err := os.Stat(devConfig); err == nil && !cmd.Bool("no-route") {
-		s, err := dev.OpenStack(dev.StackOptions{Config: devConfig})
-		if err != nil {
+	if !cmd.Bool("no-route") {
+		if err := routeGateway(ctx, cmd, root, info.Group, out); err != nil {
 			return err
 		}
-		upstream := cmd.String("upstream")
-		if upstream == "" {
-			upstream = fmt.Sprintf("%s:%d", s.HostAlias, s.Config.App.Port)
-		}
-		if err := s.Gateway().AddAPI(ctx, info.Group, upstream); err != nil {
-			return err
-		}
-		_, _ = fmt.Fprintf(out, "gateway: %s -> %s\n", ui.Name("/apis/"+info.Group+"/*"), ui.Name(upstream))
-	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
 	}
 
 	c, err := resolveContext(cmd)

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/urfave/cli/v3"
+
 	"github.com/infrapi/cli/internal/clicontext"
 )
 
@@ -108,4 +110,46 @@ func firstOf(l []any) any {
 		return nil
 	}
 	return l[0]
+}
+
+// app run and app register work with the stack DEV_CONFIG (or --config)
+// names, as the dev commands do; the project's dev.yaml otherwise; none
+// without either.
+func TestProjectStack(t *testing.T) {
+	root := t.TempDir()
+	stackOf := func(env string, args ...string) (string, error) {
+		t.Setenv("DEV_CONFIG", env)
+		var got string
+		cmd := &cli.Command{Name: "run", Flags: []cli.Flag{devConfigFlag()}, Action: func(_ context.Context, cmd *cli.Command) error {
+			s, err := projectStack(cmd, root)
+			if s != nil {
+				got = s.ConfigPath
+			}
+			return err
+		}}
+		err := cmd.Run(context.Background(), append([]string{"run"}, args...))
+		return got, err
+	}
+	if got, err := stackOf(""); err != nil || got != "" {
+		t.Fatalf("no dev.yaml: %q, %v", got, err)
+	}
+	cfg := "domain: infrapi.io\nplatform: sandbox\nregion: eu-west-1\nlocation: dc1\n"
+	for _, name := range []string{"dev.yaml", "dev.local.yaml"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(cfg), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := stackOf(""); err != nil || got != filepath.Join(root, "dev.yaml") {
+		t.Fatalf("the project's: %q, %v", got, err)
+	}
+	local := filepath.Join(root, "dev.local.yaml")
+	if got, err := stackOf(local); err != nil || got != local {
+		t.Fatalf("DEV_CONFIG: %q, %v", got, err)
+	}
+	if got, err := stackOf("", "--config", local); err != nil || got != local {
+		t.Fatalf("--config: %q, %v", got, err)
+	}
+	if _, err := stackOf(filepath.Join(root, "missing.yaml")); err == nil {
+		t.Fatal("DEV_CONFIG naming no file: no error")
+	}
 }
