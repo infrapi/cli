@@ -38,7 +38,7 @@ Or take a release archive: see
 
 | What | Why | Check with |
 |---|---|---|
-| Go 1.27.3+ | builds and runs your API | `go version` |
+| Go 1.27.4+ | builds and runs your API | `go version` |
 | podman 4.7+ **or** docker, with compose | runs the stack's containers | `podman compose version`, or `docker compose version` |
 | `make` | your project's targets: `make test`, `make lint`... | `make --version` |
 | `curl` | only for the `curl` examples of these docs | `curl --version` |
