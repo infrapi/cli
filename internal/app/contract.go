@@ -247,8 +247,8 @@ type op struct {
 	// Root is the Go expression of the path's root, api.Roots[0], and Rest
 	// the path below it: the routes follow the root when it changes.
 	Root, Rest string
-	Status  int    // the success status
-	Result  string // the response's Go type; empty without a body
+	Status     int    // the success status
+	Result     string // the response's Go type; empty without a body
 	// Stream is the media type of a binary response (type: string,
 	// format: binary), application/gzip say: Result is then io.ReadCloser,
 	// streamed as it is.
