@@ -486,6 +486,23 @@ curl -s -X POST http://localhost:8080/apis/authorization.infrapi.io/v1/clustergr
   -d '{"name": "g", "metadata": {...}, "groups": [...]}'
 ```
 
+**OpenTofu/Terraform**
+
+```hcl
+# namespaced: its namespace an attribute
+resource "kayra_subscription" "vault" {
+  namespace = "acme"
+  api       = "vault.infrapi.io"
+}
+
+# cluster-scoped
+resource "kayra_api_registration" "vault" {
+  name       = "vault.infrapi.io"
+  short_name = "vault"
+  owner      = "sre"
+}
+```
+
 `get` maps to `GET` either way — no trailing `<name>` lists the whole
 collection (`.../<resource>`), a `<name>` fetches that one item
 (`.../<resource>/<name>`), exactly like `kubectl get` itself (and

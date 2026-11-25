@@ -245,6 +245,21 @@ curl -s -X POST $GW/apis/catalog.infrapi.io/v1/apiregistrations \
       "identity": {"jwks_from": "spec"}}'
 ```
 
+**OpenTofu/Terraform**
+
+```hcl
+resource "kayra_api_registration" "compute" {
+  name       = "compute.infrapi.io"
+  short_name = "compute"
+  version    = "v1"
+  active     = true
+  owner      = "dev"
+  identity = {
+    jwks_from = "spec"
+  }
+}
+```
+
 ## 5. Create a namespace
 
 As `dev-admin`: a namespace, `acme`, and the cluster RBAC that lets
@@ -284,6 +299,37 @@ curl -s -X POST $GW/apis/authorization.infrapi.io/v1/clusterrolebindings "${H[@]
   -d "{\"name\": \"acme-admin-binding\", $META, \"role\": \"acme-admin-role\", \"groups\": [\"acme-admins\"]}"
 ```
 
+**OpenTofu/Terraform**
+
+```hcl
+resource "kayra_namespace" "acme" {
+  name = "acme"
+}
+
+resource "kayra_cluster_group" "acme_admins" {
+  name     = "acme-admins"
+  metadata = { namespace = kayra_namespace.acme.name, region = "eu-west-1", platform = "sandbox" }
+  groups   = ["sandbox-core-sysadmin", "sandbox-acme-admins"]
+}
+
+resource "kayra_cluster_role" "acme_admin_role" {
+  name     = "acme-admin-role"
+  metadata = { namespace = kayra_namespace.acme.name, region = "eu-west-1", platform = "sandbox" }
+  rules = [{
+    apis      = ["catalog.infrapi.io", "authorization.infrapi.io"]
+    resources = ["*"]
+    verbs     = ["*"]
+  }]
+}
+
+resource "kayra_cluster_role_binding" "acme_admin_binding" {
+  name     = "acme-admin-binding"
+  metadata = { namespace = kayra_namespace.acme.name, region = "eu-west-1", platform = "sandbox" }
+  role     = kayra_cluster_role.acme_admin_role.name
+  groups   = [kayra_cluster_group.acme_admins.name]
+}
+```
+
 ## 6. Subscribe the namespace
 
 A namespace uses an API once subscribed. The reconciler then runs the `dev`
@@ -309,6 +355,17 @@ curl -s -X POST $GW/apis/catalog.infrapi.io/v1/namespaces/acme/subscriptions "${
 # a few seconds later
 curl -s $GW/apis/catalog.infrapi.io/v1/namespaces/acme/subscriptions/compute.infrapi.io "${H[@]}"
 # {"api":"compute.infrapi.io","active":true,"state":"success","synced":true,…}
+```
+
+**OpenTofu/Terraform**
+
+```hcl
+resource "kayra_subscription" "compute" {
+  namespace = "acme"
+  api       = "compute.infrapi.io"
+}
+
+# a few seconds later, at the next refresh: active = true, state = "success", synced = true
 ```
 
 `infrapi-cli dev logs reconciler` shows it at work:
@@ -376,6 +433,35 @@ curl -s -X POST $NS/rolebindings "${H[@]}" \
 curl -s -X POST $GW/apis/authorization.infrapi.io/v1/check -H "Authorization: Bearer $JDOE" -H "Content-Type: application/json" \
   -d '{"namespace": "acme", "api": "compute.infrapi.io", "resource": "vms", "verb": "create"}'
 # {"allowed":true}
+```
+
+**OpenTofu/Terraform**
+
+```hcl
+resource "kayra_group" "devs" {
+  namespace = "acme"
+  name      = "devs"
+  metadata  = { namespace = "acme", region = "eu-west-1", platform = "sandbox" }
+  groups    = ["sandbox-acme-admins"]
+}
+
+resource "kayra_role" "vms_admin" {
+  namespace = "acme"
+  name      = "vms-admin"
+  metadata  = { namespace = "acme", region = "eu-west-1", platform = "sandbox" }
+  rules = [
+    { apis = ["compute.infrapi.io"], resources = ["vms"], verbs = ["*"] },
+    { apis = ["events.infrapi.io"], resources = ["events"], verbs = ["get", "list"] },
+  ]
+}
+
+resource "kayra_role_binding" "devs_vms_admin" {
+  namespace = "acme"
+  name      = "devs-vms-admin"
+  metadata  = { namespace = "acme", region = "eu-west-1", platform = "sandbox" }
+  role      = kayra_role.vms_admin.name
+  groups    = [kayra_group.devs.name]
+}
 ```
 
 A role names only resources the API's spec declares: Kayra answers 404 for
