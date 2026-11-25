@@ -29,6 +29,7 @@ import (
 	"github.com/infrapi/cli/internal/netproxy"
 	"github.com/infrapi/cli/internal/oauth2login"
 	"github.com/infrapi/cli/internal/ui"
+	"github.com/infrapi/cli/internal/useragent"
 )
 
 // version is set at build time via -ldflags "-X main.version=..." —
@@ -40,6 +41,9 @@ func main() {
 	// https_proxy, http_proxy, no_proxy: Kayra's API, the login, APISIX's
 	// Admin API, dev init's template clone
 	netproxy.Setup()
+	// infrapi-cli/<version> on every request: the logs of who is called
+	// tell the client
+	useragent.Setup("infrapi-cli", version)
 	if err := newRoot().Run(context.Background(), os.Args); err != nil {
 		_, _ = fmt.Fprintln(ui.Stderr(), ui.Fail("infrapi-cli:"), err)
 		os.Exit(1)

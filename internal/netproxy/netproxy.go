@@ -8,9 +8,8 @@
 //	                           always are
 //
 // Every client of infrapi-cli goes through http.DefaultTransport: Kayra's
-// API, the login, APISIX's Admin API, and go-git, which clones the dev
-// stack's template. Setup makes it read the environment on each request,
-// where net/http reads it once.
+// API, the login, APISIX's Admin API. Setup makes it read the environment
+// on each request, where net/http reads it once.
 package netproxy
 
 import (
