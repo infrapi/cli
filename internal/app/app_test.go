@@ -180,7 +180,7 @@ func TestAdd(t *testing.T) {
 		t.Errorf("vms.go:\n%s", stubs)
 	}
 	gen := read(t, filepath.Join(root, "internal/compute/zz_generated.go"))
-	if !strings.Contains(gen, `r.DELETE("/apis/compute.infrapi.io/v1/namespaces/:namespace/vms/:name"`) || !strings.Contains(gen, "c.Status(http.StatusNoContent)") {
+	if !strings.Contains(gen, `r.DELETE(api.Roots[0]+"/namespaces/:namespace/vms/:name"`) || !strings.Contains(gen, "c.Status(http.StatusNoContent)") {
 		t.Errorf("zz_generated.go:\n%s", gen)
 	}
 
@@ -278,6 +278,68 @@ func TestGenerate_types(t *testing.T) {
 		t.Errorf("handlers:\n%s", h)
 	}
 	parses(t, root)
+}
+
+// A project of several APIs: each its Group and Roots, prefixed, its own
+// handlers' package; a body the request may leave out is bound only when
+// sent.
+func TestGenerate_severalAPIs(t *testing.T) {
+	root := newProject(t, Options{Name: "compute", Module: "github.com/acme/compute"})
+	contract := func(name, paths string) string {
+		return "openapi: 3.0.3\ninfo: {title: " + name + ", version: v1, x-infrapi-group: " + name + ".infrapi.io}\npaths:\n" + paths +
+			"components:\n  schemas:\n    Problem: {type: object, properties: {status: {type: integer}}}\n"
+	}
+	files := map[string]string{
+		"compute-v1.yaml": contract("compute", "  /apis/compute.infrapi.io/v1/hosts:\n    get:\n      operationId: listHosts\n"+
+			"      responses: {'200': {description: x, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Problem'}}}}}}\n"),
+		"storage-v1.yaml": contract("storage", "  /apis/storage.infrapi.io/v1/disks/{name}/sync:\n    put:\n      operationId: syncDisk\n"+
+			"      parameters: [{name: name, in: path, required: true, schema: {type: string}}]\n"+
+			"      requestBody: {content: {application/json: {schema: {type: object, properties: {force: {type: boolean}}}}}}\n"+
+			"      responses: {'204': {description: x}}\n"),
+	}
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(root, "api", name), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	g, err := Generate(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Name != "" {
+		t.Errorf("name %q: none for several APIs", g.Name)
+	}
+	types := read(t, filepath.Join(root, "api", "zz_generated.go"))
+	for _, want := range []string{`var ComputeGroup = "compute.infrapi.io"`, `var StorageRoots = []string{"/apis/storage.infrapi.io/v1"}`,
+		`Root: StorageRoots[0]`, "var contractStorageV1 []byte"} {
+		if !strings.Contains(types, want) {
+			t.Errorf("api/zz_generated.go has no %q:\n%s", want, types)
+		}
+	}
+	h := read(t, filepath.Join(root, "internal/storage/zz_generated.go"))
+	if !strings.Contains(h, "package storage") || !strings.Contains(h, `r.PUT(api.StorageRoots[0]+"/disks/:name/sync"`) ||
+		!strings.Contains(h, "if c.Request.ContentLength != 0 {") {
+		t.Errorf("storage handlers:\n%s", h)
+	}
+	if h := read(t, filepath.Join(root, "internal/compute/zz_generated.go")); !strings.Contains(h, `r.GET(api.ComputeRoots[0]+"/hosts"`) {
+		t.Errorf("compute handlers:\n%s", h)
+	}
+	if _, err := Describe(root); err == nil {
+		t.Error("Describe: no error for several APIs")
+	}
+	if _, err := Add(root, Resource{Name: "vm"}); err == nil {
+		t.Error("Add: no error for several APIs")
+	}
+	parses(t, root)
+
+	// one Go type: a schema of the same name, written otherwise, is refused
+	other := strings.Replace(files["storage-v1.yaml"], "status: {type: integer}", "status: {type: string}", 1)
+	if err := os.WriteFile(filepath.Join(root, "api", "storage-v1.yaml"), []byte(other), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Generate(root); err == nil || !strings.Contains(err.Error(), "Problem") {
+		t.Errorf("two Problem schemas: %v", err)
+	}
 }
 
 func TestGenerate_refuses(t *testing.T) {

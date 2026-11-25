@@ -72,6 +72,9 @@ func Add(root string, r Resource) (Added, error) {
 	if err != nil {
 		return Added{}, err
 	}
+	if apis := byAPI(contracts); len(apis) > 1 {
+		return Added{}, fmt.Errorf("app add: api/ holds %d APIs (%s): write the resource in its contract, then infrapi-cli app generate", len(apis), strings.Join(apiNames(apis), ", "))
+	}
 	c := contracts[len(contracts)-1]
 	if r.Version != "" {
 		c = nil

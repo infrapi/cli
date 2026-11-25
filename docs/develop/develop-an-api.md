@@ -160,11 +160,21 @@ seeing it. What the generator reads:
 | an operation's `operationId`, `getVM` | a method of `Handlers`, `GetVM` |
 | its path and query parameters, its JSON body | its arguments, `namespace, name string, body api.VM` |
 | its first `2xx` response | its result and status: `201` for `createVM`, none for `204` |
+| a `requestBody` not `required` | the body's zero value when the request sends none |
 
 `internal/compute/zz_generated.go` has `Handlers`, one method per
-operation, and `Register`, their routes. `cmd/compute/main.go` registers
+operation, and `Register`, their routes, under `api.Roots`. `cmd/compute/main.go` registers
 `compute.New()`, whose `Service` must have every method: an operation added
 to the contract by hand is a compile error until written.
+
+A project may serve several APIs, a contract each (`api/compute-v1.yaml`,
+`api/storage-v1.yaml`), each its title and group. Their names in package
+`api` then start with the API's (`api.StorageGroup`, `api.StorageRoots`),
+each API has its own `internal/<title>` package of `Handlers`, and a schema
+two of them have is one type, written the same in both. `Group` and `Roots`
+are variables: a service serving the API under another group changes them
+before `Register`, as Kayra does for its domain. `app add` and
+`app register` take a project of one API.
 
 ## 4. Run it, register it
 

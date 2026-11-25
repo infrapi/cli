@@ -83,7 +83,8 @@ type parameter struct {
 }
 
 type body struct {
-	Content map[string]struct {
+	Required bool `yaml:"required"`
+	Content  map[string]struct {
 		Schema *schema `yaml:"schema"`
 	} `yaml:"content"`
 }
@@ -99,6 +100,7 @@ type schema struct {
 	Ref                  string            `yaml:"$ref"`
 	Type                 string            `yaml:"type"`
 	Format               string            `yaml:"format"`
+	ReadOnly             bool              `yaml:"readOnly"`
 	Description          string            `yaml:"description"`
 	Items                *schema           `yaml:"items"`
 	Properties           ordered[*schema]  `yaml:"properties"`
@@ -162,8 +164,9 @@ var (
 	apiPath      = regexp.MustCompile(`^/apis/([a-z0-9.-]+)/(v[0-9a-z]+)(/.*)?$`)
 )
 
-// readContracts reads the contracts in dir, api/: at least one, all of the
-// same API and group.
+// readContracts reads the contracts in dir, api/: at least one. A project
+// may serve several APIs, each its name and group: the contracts of one
+// name share its group, and no two names share one.
 func readContracts(dir string) ([]*contract, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -182,8 +185,10 @@ func readContracts(dir string) ([]*contract, error) {
 		if c.Name != m[1] {
 			return nil, fmt.Errorf("%s: info.title is %q: the file is %s-%s.yaml", e.Name(), c.Name, c.Name, c.Version)
 		}
-		if len(out) > 0 && (c.Name != out[0].Name || c.Group != out[0].Group) {
-			return nil, fmt.Errorf("%s: API %s, group %s: %s has %s, %s", e.Name(), c.Name, c.Group, out[0].File, out[0].Name, out[0].Group)
+		for _, other := range out {
+			if (c.Name == other.Name) != (c.Group == other.Group) {
+				return nil, fmt.Errorf("%s: API %s, group %s: %s has %s, %s: one group per API", e.Name(), c.Name, c.Group, other.File, other.Name, other.Group)
+			}
 		}
 		out = append(out, c)
 	}
@@ -236,6 +241,12 @@ type op struct {
 	Path    string // the contract's: /apis/<group>/v1/namespaces/{namespace}/vms
 	Params  []param
 	Body    string // the request body's Go type, in package api; empty without one
+	// Optional is a body the request may leave out (requestBody.required
+	// false, OpenAPI's default): the handler gets its zero value.
+	Optional bool
+	// Root is the Go expression of the path's root, api.Roots[0], and Rest
+	// the path below it: the routes follow the root when it changes.
+	Root, Rest string
 	Status  int    // the success status
 	Result  string // the response's Go type; empty without a body
 	// Stream is the media type of a binary response (type: string,
@@ -250,9 +261,9 @@ type param struct {
 	Query bool
 }
 
-// GinPath is Path with gin's :name for {name}.
-func (o op) GinPath() string {
-	return regexp.MustCompile(`\{([^}]+)\}`).ReplaceAllString(o.Path, ":$1")
+// GinRest is Rest with gin's :name for {name}.
+func (o op) GinRest() string {
+	return regexp.MustCompile(`\{([^}]+)\}`).ReplaceAllString(o.Rest, ":$1")
 }
 
 // operations are c's operations, by path then method.
@@ -315,7 +326,7 @@ func (c *contract) operation(pkg, path, method string, item *pathItem, o *operat
 		if err != nil {
 			return op{}, fmt.Errorf("requestBody: %w", err)
 		}
-		out.Body = t
+		out.Body, out.Optional = t, !o.RequestBody.Required
 	}
 
 	codes := make([]string, 0, len(o.Responses))
@@ -400,7 +411,7 @@ func goType(pkg string, s *schema) (string, error) {
 // initialisms are written in capitals in a Go name.
 var initialisms = map[string]bool{
 	"api": true, "cpu": true, "dns": true, "gb": true, "http": true, "https": true, "id": true, "ip": true, "json": true,
-	"kb": true, "mb": true, "os": true, "sha": true, "sql": true, "ssh": true, "tcp": true, "tls": true, "ttl": true, "udp": true,
+	"kb": true, "mb": true, "os": true, "sha": true, "sql": true, "ssh": true, "tcp": true, "tls": true, "ttl": true, "udp": true, "uid": true, "jwks": true, "jwt": true,
 	"uri": true, "url": true, "uuid": true, "vm": true,
 }
 
@@ -471,6 +482,9 @@ func Describe(root string) (Info, error) {
 	contracts, err := readContracts(filepath.Join(root, "api"))
 	if err != nil {
 		return Info{}, err
+	}
+	if apis := byAPI(contracts); len(apis) > 1 {
+		return Info{}, fmt.Errorf("api/ holds %d APIs (%s): a project of one API only", len(apis), strings.Join(apiNames(apis), ", "))
 	}
 	in := Info{Name: contracts[0].Name, Group: contracts[0].Group, Description: contracts[0].doc.Info.Description}
 	for _, c := range contracts {
