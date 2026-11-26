@@ -63,7 +63,7 @@ compute/
 ```
 
 Then `go mod tidy`, when Go is installed, with the project's `GOPRIVATE`.
-The project starts on lib `v0.19.0` and Go 1.27.3.
+The project starts on lib `v0.26.0` and Go 1.27.4.
 
 ## app add
 

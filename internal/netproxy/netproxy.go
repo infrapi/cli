@@ -8,9 +8,10 @@
 //	                           always are
 //
 // Every client of infrapi-cli goes through http.DefaultTransport: Kayra's
-// API, the login, APISIX's Admin API, and go-git, which clones the dev
-// stack's template. Setup makes it read the environment on each request,
-// where net/http reads it once.
+// API, the login and APISIX's Admin API. Setup makes it read the
+// environment on each request, where net/http reads it once, and name
+// infrapi-cli in the User-Agent, where Go's default, Go-http-client/1.1,
+// tells the called side's logs nothing.
 package netproxy
 
 import (
@@ -26,11 +27,31 @@ import (
 // them.
 var Vars = []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"}
 
-// Setup makes http.DefaultTransport take its proxy from the environment.
-func Setup() {
-	if t, ok := http.DefaultTransport.(*http.Transport); ok {
-		t.Proxy = Proxy
+// Setup makes http.DefaultTransport take its proxy from the environment,
+// and set userAgent on every request that has no User-Agent of its own.
+func Setup(userAgent string) {
+	t, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return // set up already
 	}
+	t.Proxy = Proxy
+	http.DefaultTransport = agent{next: t, value: userAgent}
+}
+
+// agent sets the User-Agent of a request without one, on a clone: a
+// RoundTripper must not change the request it is given.
+type agent struct {
+	next  http.RoundTripper
+	value string
+}
+
+func (a agent) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Header.Get("User-Agent") != "" {
+		return a.next.RoundTrip(r)
+	}
+	r = r.Clone(r.Context())
+	r.Header.Set("User-Agent", a.value)
+	return a.next.RoundTrip(r)
 }
 
 // Proxy is the proxy for req, nil for none, from the environment as it is

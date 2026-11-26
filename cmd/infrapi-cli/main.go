@@ -37,9 +37,9 @@ import (
 var version = "dev"
 
 func main() {
-	// https_proxy, http_proxy, no_proxy: Kayra's API, the login, APISIX's
-	// Admin API, dev init's template clone
-	netproxy.Setup()
+	// https_proxy, http_proxy, no_proxy, and infrapi-cli/<version> in the
+	// User-Agent: Kayra's API, the login, APISIX's Admin API
+	netproxy.Setup("infrapi-cli/" + version)
 	if err := newRoot().Run(context.Background(), os.Args); err != nil {
 		_, _ = fmt.Fprintln(ui.Stderr(), ui.Fail("infrapi-cli:"), err)
 		os.Exit(1)
