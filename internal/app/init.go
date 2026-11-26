@@ -25,7 +25,7 @@ var templates embed.FS
 // Versions a new project starts with.
 const (
 	GoVersion  = "1.27.4"
-	LibVersion = "v0.21.0"
+	LibVersion = "v0.26.0"
 	GinVersion = "v1.12.0"
 	// CIRef is the infrapi/ci version its CI imports.
 	CIRef = "v1"
